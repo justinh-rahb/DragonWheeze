@@ -1,0 +1,19 @@
+dependencies:
+  dc_evlog:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_evlog
+  dc_source:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_source
+  dc_wifi:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_wifi
+  dc_ui:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_ui
+  dc_mqtt:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_mqtt
+  dc_portal:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_portal

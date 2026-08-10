@@ -1,0 +1,8 @@
+# DragonWheeze partition table (ESP32-C3 4MB Flash)
+# Name,     Type, SubType,  Offset,   Size
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xe000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x1E0000,
+app1,       app,  ota_1,    0x1f0000, 0x1E0000,
+spiffs,     data, spiffs,   0x3d0000, 0x2F000,
+coredump,   data, coredump, 0x3ff000, 0x1000,
