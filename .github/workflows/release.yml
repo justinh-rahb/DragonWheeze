@@ -1,0 +1,81 @@
+name: firmware-release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: firmware-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            V="${{ github.ref_name }}"
+          else
+            V="$(git describe --tags --always --dirty)"
+          fi
+          echo "version=$V" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Build (ESP-IDF v5.3)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.3
+          target: esp32c3
+          path: '.'
+
+      - name: Package release artifacts
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+          IDF_VERSION: v5.3
+        run: |
+          pipx install esptool >/dev/null 2>&1 || pip install --user esptool
+          export PATH="$HOME/.local/bin:$PATH"
+          ./tools/package_release.sh
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          IS_TAG: ${{ github.ref_type == 'tag' }}
+        run: |
+          notes="$(cat <<EOF
+          ## DragonWheeze ${VERSION} Release
+
+          Native ESP-IDF firmware for the Sovol SH01 Filament Dryer, powered by an ESP32-C3 Super Mini and consuming \`dragon-core\` components.
+
+          ### Attribution & Acknowledgments
+          Builds upon the reverse-engineering writeup by **Simply Maker** ([Easily Integrate SOVOL Filament Dryer to Home Assistant with ESP32](https://simplymaker.net/electronics/easily-integrate-sovol-filament-dryer-to-home-assistant-with-esp32/)).
+
+          | Asset | Purpose |
+          |---|---|
+          | \`dragonwheeze-${VERSION}.bin\` | Application image (OTA upload via Web UI / dc_portal) |
+          | \`dragonwheeze-${VERSION}-factory.bin\` | Single merged factory image (flash @ 0x0 via USB) |
+          | \`dragonwheeze-${VERSION}-install-bundle.zip\` | Complete release bundle with binaries & manifest |
+          | \`manifest.json\` | Build provenance & SHA-256 checksums |
+          | \`SHA256SUMS.txt\` | Checksum verification file |
+          EOF
+          )"
+          flags=(--title "${VERSION} — Native Sovol SH01 Firmware" --notes "$notes")
+          [ "$IS_TAG" = "true" ] || flags+=(--draft)
+
+          gh release create "$VERSION" "${flags[@]}" \
+            "dist/dragonwheeze-${VERSION}.bin" \
+            "dist/dragonwheeze-${VERSION}-factory.bin" \
+            "dist/dragonwheeze-${VERSION}-install-bundle.zip" \
+            dist/manifest.json \
+            dist/SHA256SUMS.txt
