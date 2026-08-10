@@ -76,18 +76,18 @@ void app_main(void)
     ESP_ERROR_CHECK(dw_device_init());
 
     // 6. Wi-Fi networking bringup via dragon-core dc_wifi
-    dc_wifi_set_identity("DragonWheeze");
-    ESP_LOGI(TAG, "Starting dc_wifi...");
-
-#if defined(DEV_WIFI_SSID) && defined(DEV_WIFI_PASS)
-    dc_wifi_config_t wifi_cfg = {
-        .ssid = DEV_WIFI_SSID,
-        .password = DEV_WIFI_PASS,
+    const dc_wifi_identity_t wifi_identity = {
+        .hostname = "dragonwheeze",
+        .instance_name = "DragonWheeze",
+        .ap_ssid_prefix = "DragonWheeze_",
+        .ap_password = DC_WIFI_DEFAULT_AP_PASSWORD,
     };
-    dc_wifi_start(&wifi_cfg);
-#else
-    dc_wifi_start(NULL);
-#endif
+    esp_err_t wifi_err = dc_wifi_set_identity(&wifi_identity);
+    if (wifi_err != ESP_OK) {
+        ESP_LOGE(TAG, "dc_wifi_set_identity: %s (using family defaults)", esp_err_to_name(wifi_err));
+    }
+    ESP_LOGI(TAG, "Starting dc_wifi...");
+    dc_wifi_start();
 
     // 7. Web Portal bringup via dragon-core dc_portal
     ESP_LOGI(TAG, "Starting web portal...");
