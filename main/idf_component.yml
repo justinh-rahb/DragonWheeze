@@ -1,4 +1,6 @@
 dependencies:
+  cjson:
+    version: "^1.7.0"
   dc_evlog:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_evlog
