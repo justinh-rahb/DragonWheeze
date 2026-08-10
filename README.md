@@ -1,28 +1,37 @@
-# 🐉 DragonWheeze
+# DragonWheeze
 
-> *"It's not DragonBreath. It's barely a dragon. It's a wheeze."*
+Native ESP-IDF firmware for the **Sovol SH01 Filament Dryer** running on an **ESP32-C3 Super Mini**, consuming shared components from [`dragon-core`](https://github.com/justinh-rahb/dragon-core).
 
-**DragonWheeze** is open, native ESP-IDF firmware for the **Sovol SH01 Filament Dryer** running on an **ESP32-C3 Super Mini**. 
-
-Unlike its flame-spewing sibling [`DragonBreath`](https://github.com/justinh-rahb/DragonBreath) (which rips out stock electronics to directly control mains SSRs, zero-cross TRIAC AC fans, and dual thermistors), **DragonWheeze** is a gloriously cursed, subordinate piggyback hack. It leaves the stock Sovol control board intact and uses optocouplers to electrically poke capacitive touch pads like a tiny, relentless phantom finger.
+The name is a nod to the fact that the SH01 is a lighter, simpler entry in the Dragon family lineup compared to [`DragonBreath`](https://github.com/justinh-rahb/DragonBreath).
 
 ---
 
-## ⚡ The Cursed Hardware Reality
+## Attribution & Acknowledgments
 
-The Sovol SH01 is a charmingly quirky piece of kit. To bring it into the `dragon-core` ecosystem without redesigning its mainboard from scratch, the hardware interface involves several mechanical and electrical compromises:
+This firmware builds upon the excellent hardware reverse-engineering writeup by **Simply Maker**:
+👉 **[Easily Integrate SOVOL Filament Dryer to Home Assistant with ESP32 — Simply Maker](https://simplymaker.net/electronics/easily-integrate-sovol-filament-dryer-to-home-assistant-with-esp32/)**
 
-- **The Finger Simulator 3000**: Three **4N35 optocouplers** wired across the BS813A-1 touch-key IC. When the ESP32-C3 wants to press `M` (Mode), `A` (Adjust), or `P` (Power), it energizes an optocoupler LED for 200ms to ground the touch pad, tricking the Sovol chip into believing a human touched it.
-- **Noise Mitigation**: 100kΩ resistors are hand-soldered directly onto the front panel's physical touch-spring joints so long wire runs don't cause false ghost presses.
-- **Power Delivery Struggles**: The SH01's onboard 3.3V rail is far too weak to power an ESP32-C3 during Wi-Fi transients. Power is tapped from the 12V rail through a buck converter stepped down to ~5.8V fed into 5V/GND, stabilized with a 100µF decoupling capacitor to ensure reliable boot.
-- **Blind Faith State Machine**: Space constraints inside the case mean we can only monitor the physical Power button (via BS813A-1 pin 4). The `M` and `A` physical buttons and the 7-segment LCD display are completely unobservable. To set a target temperature or time deterministically, DragonWheeze executes a **"Reset-Before-Automation"** routine: it turns the dryer OFF, turns it ON (resetting it to 40°C / 6h base state), and then rapidly taps `M` and `A` to set your desired profile.
-- **The Mysterious E0 Error**: The SH01 control board occasionally throws an `E0` I2C error when it feels overwhelmed. DragonWheeze mitigates this by throttling auxiliary AHT20 sensor polling (default 10s) and logging bus contention events to an in-memory ring buffer (`dc_evlog`) for diagnostic support.
+The hardware interface strategy—using 4N35 optocouplers across the BS813A-1 touch IC, 100kΩ noise-suppression resistors on touch-spring joints, 12V buck conversion, and power button monitoring—is directly derived from Simply Maker's original analysis.
+
+Whereas the original build used ESPHome as a basic GPIO bridge with Home Assistant helpers (`input_boolean`, `input_select`) and automations handling the sequence logic, **DragonWheeze** ports that control logic into native C/C++ firmware running on the ESP32-C3 itself.
 
 ---
 
-## 🏗️ Architecture: Subordinate Supervisory Control
+## Hardware Interface & Implementation Details
 
-DragonWheeze runs on top of [`dragon-core`](https://github.com/justinh-rahb/dragon-core) (`dc_wifi`, `dc_portal`, `dc_ui`, `dc_mqtt`, `dc_evlog`), replacing brittle Home Assistant `input_select`/`input_boolean`/`time_pattern` automations with local firmware state:
+- **Touch Button Emulation**: Three **4N35 optocouplers** simulate physical touches on the `M` (Mode), `A` (Adjust), and `P` (Power) pads by grounding each button trace for 200ms.
+- **Noise Mitigation**: 100kΩ resistors soldered to each touch-spring joint prevent false triggers caused by wire inductance.
+- **Power Delivery**: Powered from the SH01's 12V rail via a buck converter stepped down to ~5.8V fed into 5V/GND, with a 100µF capacitor across 5V/GND for boot stability.
+- **Power Button Sensing**: Pin 4 off the BS813A-1 touch IC feeds an ESP32 GPIO (idle HIGH, drops LOW on physical press) for hardware button monitoring.
+- **Environment Sensing**: Onboard AHT20 sensor read over I2C via a 4-pin connector.
+- **On-Device State Machine**: Because physical `M` and `A` taps cannot be read directly, sequence commands use a deterministic **reset-before-automation** strategy (Power OFF $\rightarrow$ ON to reach known 40°C/6h base state, followed by target `M`/`A` pulses).
+- **I2C E0 Error Diagnostics**: Throttles AHT20 polling intervals (default 10s) and logs bus contention events to `dc_evlog` to help characterize and mitigate the SH01 mainboard's intermittent `E0` error.
+
+---
+
+## Architecture: Subordinate Supervisory Controller
+
+DragonWheeze uses [`dragon-core`](https://github.com/justinh-rahb/dragon-core) (`dc_wifi`, `dc_portal`, `dc_ui`, `dc_mqtt`, `dc_evlog`) to run state control locally on-device:
 
 ```
 [ Home Assistant / Local Web UI ]
@@ -30,38 +39,36 @@ DragonWheeze runs on top of [`dragon-core`](https://github.com/justinh-rahb/drag
                ▼
 ┌────────────────────────────────────────────────────────┐
 │ DragonWheeze Firmware (ESP32-C3 Super Mini)            │
-│  - Owns local timers, preset profiles (PLA/PETG/TPU/ABS)│
+│  - Owns local timers & presets (PLA/PETG/TPU/ABS)      │
 │  - Reads auxiliary ambient temp & humidity (AHT20)     │
-│  - Executes 4N35 optocoupler pulse macros              │
+│  - Executes optocoupler pulse macro sequences          │
 └───────────────────────────┬────────────────────────────┘
-                            │ (Optocoupler Taps)
+                            │ (4N35 Optocoupler Taps)
                             ▼
 ┌────────────────────────────────────────────────────────┐
 │ Sovol SH01 Stock Control Board                         │
-│  - Controls 12V resistive PCB heater element           │
-│  - Reads internal thermistor & performs thermal safety │
-│  - Drives 7-segment display                            │
+│  - Regulates 12V resistive PCB heating element         │
+│  - Handles closed-loop thermistor safety               │
+│  - Drives front panel & 7-segment display              │
 └────────────────────────────────────────────────────────┘
 ```
 
-The stock Sovol controller handles closed-loop heating of the resistive PCB element and thermal safety; DragonWheeze acts as an intelligent remote control that publishes state to Home Assistant.
-
 ---
 
-## 📌 Pinout (ESP32-C3 Super Mini)
+## Pinout (ESP32-C3 Super Mini)
 
-| Target | GPIO Pin | Notes |
+| Line / Peripheral | GPIO Pin | Details |
 |---|---|---|
 | **Optocoupler M** | `GPIO 4` | Mode button pulse (active HIGH) |
 | **Optocoupler A** | `GPIO 5` | Adjust button pulse (active HIGH) |
 | **Optocoupler P** | `GPIO 6` | Power button pulse (active HIGH) |
 | **Power Sense** | `GPIO 7` | BS813A-1 pin 4 tap (idle HIGH, active LOW) |
-| **AHT20 SDA** | `GPIO 0` | I2C Data (auxiliary ambient sensor) |
-| **AHT20 SCL** | `GPIO 1` | I2C Clock (auxiliary ambient sensor) |
+| **AHT20 SDA** | `GPIO 0` | I2C Data (4.7kΩ pullup) |
+| **AHT20 SCL** | `GPIO 1` | I2C Clock (4.7kΩ pullup) |
 
 ---
 
-## 🚀 Preset Profiles
+## Preset Profiles
 
 | Preset | Target Temp | Target Duration |
 |---|---|---|
@@ -72,9 +79,7 @@ The stock Sovol controller handles closed-loop heating of the resistive PCB elem
 
 ---
 
-## 🛠️ Building & Flashing
-
-Requires ESP-IDF v5.x:
+## Building & Flashing
 
 ```bash
 idf.py set-target esp32c3
@@ -84,6 +89,6 @@ idf.py flash monitor
 
 ---
 
-## 📜 License
+## License
 
 MIT License. See [LICENSE](LICENSE).
