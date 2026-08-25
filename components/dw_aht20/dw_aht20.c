@@ -29,6 +29,9 @@ static dw_aht20_stats_t s_stats = { 0 };
 // by default (a filament dryer changes slowly) and let the user tune it.
 static uint32_t s_polling_interval_sec = 120;
 static bool s_initialized = false;
+// The I2C driver is a one-time global install; only the sensor handshake below
+// is retried. Re-installing an already-installed driver returns ESP_FAIL.
+static bool s_driver_installed = false;
 
 static uint8_t calc_crc8(const uint8_t *ptr, size_t len)
 {
@@ -75,16 +78,20 @@ esp_err_t dw_aht20_init(void)
         .master.clk_speed = 100000, // 100kHz standard mode for bus stability
     };
 
-    esp_err_t ret = i2c_param_config(DW_I2C_PORT, &conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "i2c_param_config failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = i2c_driver_install(DW_I2C_PORT, conf.mode, 0, 0, 0);
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "i2c_driver_install failed: %s", esp_err_to_name(ret));
-        return ret;
+    // Install the bus driver once; later dw_aht20_init() calls (the read-path
+    // recovery) skip this and only redo the sensor handshake below.
+    if (!s_driver_installed) {
+        esp_err_t cfg = i2c_param_config(DW_I2C_PORT, &conf);
+        if (cfg != ESP_OK) {
+            ESP_LOGE(TAG, "i2c_param_config failed: %s", esp_err_to_name(cfg));
+            return cfg;
+        }
+        esp_err_t inst = i2c_driver_install(DW_I2C_PORT, conf.mode, 0, 0, 0);
+        if (inst != ESP_OK && inst != ESP_ERR_INVALID_STATE) {
+            ESP_LOGE(TAG, "i2c_driver_install failed: %s", esp_err_to_name(inst));
+            return inst;
+        }
+        s_driver_installed = true;
     }
 
     vTaskDelay(pdMS_TO_TICKS(40));
@@ -94,7 +101,7 @@ esp_err_t dw_aht20_init(void)
 
     // Check status
     uint8_t status = 0;
-    ret = i2c_master_read_from_device(DW_I2C_PORT, AHT20_I2C_ADDR, &status, 1, pdMS_TO_TICKS(100));
+    esp_err_t ret = i2c_master_read_from_device(DW_I2C_PORT, AHT20_I2C_ADDR, &status, 1, pdMS_TO_TICKS(100));
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read AHT20 status byte: %s", esp_err_to_name(ret));
         dc_evlog_add("AHT20: Init error reading status (%s)", esp_err_to_name(ret));
