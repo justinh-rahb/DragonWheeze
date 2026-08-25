@@ -24,10 +24,11 @@ static const char *TAG = "dw_aht20";
 
 static dw_aht20_data_t s_latest_data = { .temperature_c = 0.0f, .humidity_rh = 0.0f, .valid = false, .timestamp_ms = 0 };
 static dw_aht20_stats_t s_stats = { 0 };
-// The AHT20 sits on the I2C bus the SH01 mainboard also drives. Every read is a
-// chance to collide with the mainboard and trip its E0 error, so we poll slowly
-// by default (a filament dryer changes slowly) and let the user tune it.
-static uint32_t s_polling_interval_sec = 120;
+// The AHT20 sits on the I2C bus the SH01 mainboard also drives, so any access
+// can collide with the mainboard and trip its E0 error. Default to DISABLED
+// (0) — safe on the stock shared-bus wiring. Set a non-zero interval only once
+// the ESP has its own dedicated sensor bus.
+static uint32_t s_polling_interval_sec = 0;
 static bool s_initialized = false;
 // The I2C driver is a one-time global install; only the sensor handshake below
 // is retried. Re-installing an already-installed driver returns ESP_FAIL.
@@ -208,7 +209,7 @@ dw_aht20_stats_t dw_aht20_get_stats(void)
 
 void dw_aht20_set_polling_interval(uint32_t interval_sec)
 {
-    if (interval_sec < 1) interval_sec = 1;
+    // 0 = disabled (never touch the shared I2C bus). Do NOT clamp it up.
     s_polling_interval_sec = interval_sec;
     nvs_handle_t nh;
     if (nvs_open(DW_AHT20_NVS_NS, NVS_READWRITE, &nh) == ESP_OK) {
