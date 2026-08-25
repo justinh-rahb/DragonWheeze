@@ -53,6 +53,11 @@ void app_main(void)
     // Mark app image valid after successful boot to prevent OTA rollback
     esp_ota_mark_app_valid_cancel_rollback();
 
+    // FIRST: drive the optocoupler pins to their idle (off) state ASAP so the
+    // dryer's touch pads aren't held down during the boot window. (They float
+    // until this runs; doing it before NVS/logging minimizes that flash.)
+    ESP_ERROR_CHECK(dw_board_init());
+
     // 1. Console log capture & event ring buffer
     dc_evlog_console_init();
     dc_evlog_init();
@@ -65,9 +70,6 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-
-    // 3. Hardware board pinout initialization
-    ESP_ERROR_CHECK(dw_board_init());
 
     // 4. AHT20 Temperature/Humidity sensor initialization
     dw_aht20_init();
