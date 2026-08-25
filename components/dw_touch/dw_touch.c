@@ -64,5 +64,8 @@ esp_err_t dw_touch_pulse(dw_button_t button, uint32_t pulse_duration_ms)
 
 esp_err_t dw_touch_press(dw_button_t button)
 {
-    return dw_touch_pulse(button, DW_TOUCH_DEFAULT_PULSE_MS);
+    // Power needs a press-and-hold; M/A take a short tap.
+    uint32_t ms = (button == DW_BUTTON_POWER) ? DW_TOUCH_POWER_PULSE_MS
+                                              : DW_TOUCH_DEFAULT_PULSE_MS;
+    return dw_touch_pulse(button, ms);
 }

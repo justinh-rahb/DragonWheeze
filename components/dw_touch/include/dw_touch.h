@@ -17,6 +17,9 @@ typedef enum {
 } dw_button_t;
 
 #define DW_TOUCH_DEFAULT_PULSE_MS 200
+// The SH01 power pad ignores a short tap (guards against accidental on/off) and
+// needs a press-and-hold, unlike the M/A pads which take a 200ms tap.
+#define DW_TOUCH_POWER_PULSE_MS 1500
 #define DW_TOUCH_INTER_PRESS_DELAY_MS 400
 
 // Pulse a touch optocoupler for a given duration (ms) and enforce inter-press delay
