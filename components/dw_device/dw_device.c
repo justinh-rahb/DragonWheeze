@@ -422,9 +422,11 @@ void dw_device_tick_1s(void)
     }
     s_last_phys_btn_state = phys_btn;
 
-    // Handle sensor updates every polling_interval seconds
+    // Handle sensor updates every polling_interval seconds (0 = disabled;
+    // never touch the shared I2C bus, e.g. to stop the SH01 E0 error).
+    uint32_t poll_iv = dw_aht20_get_polling_interval();
     s_sensor_timer_sec++;
-    if (s_sensor_timer_sec >= dw_aht20_get_polling_interval()) {
+    if (poll_iv > 0 && s_sensor_timer_sec >= poll_iv) {
         s_sensor_timer_sec = 0;
         float temp = 0.0f, rh = 0.0f;
         if (dw_aht20_read(&temp, &rh) == ESP_OK) {

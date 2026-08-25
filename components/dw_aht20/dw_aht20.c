@@ -62,11 +62,17 @@ esp_err_t dw_aht20_init(void)
     ESP_LOGI(TAG, "Initializing AHT20 I2C bus (SDA=%d, SCL=%d)...", DW_GPIO_I2C_SDA, DW_GPIO_I2C_SCL);
 
     // Restore the persisted poll interval (E0 mitigation knob) if the user set one.
+    // A value of 0 means "disabled" — do not touch the shared I2C bus at all.
     nvs_handle_t nh;
     if (nvs_open(DW_AHT20_NVS_NS, NVS_READONLY, &nh) == ESP_OK) {
-        uint32_t v = 0;
-        if (nvs_get_u32(nh, DW_AHT20_NVS_KEY, &v) == ESP_OK && v >= 1) s_polling_interval_sec = v;
+        uint32_t v = 0xFFFFFFFF;
+        if (nvs_get_u32(nh, DW_AHT20_NVS_KEY, &v) == ESP_OK) s_polling_interval_sec = v;
         nvs_close(nh);
+    }
+    if (s_polling_interval_sec == 0) {
+        s_initialized = false;
+        dc_evlog_add("AHT20: polling disabled — leaving the shared I2C bus untouched");
+        return ESP_OK;
     }
 
     i2c_config_t conf = {

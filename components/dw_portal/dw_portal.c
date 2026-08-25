@@ -572,10 +572,11 @@ static cJSON *setup_describe(void *ctx)
         "How often the ESP reads the AHT20 temperature/humidity sensor. It shares "
         "the I2C bus with the SH01 mainboard, so reading too often can trigger the "
         "dryer's E0 error — 120 seconds or more is recommended.");
-    cJSON *pi = add_field(s2, "aht_poll", "Poll interval (seconds)", "number");
+    cJSON *pi = add_field(s2, "aht_poll", "Poll interval (seconds, 0 = off)", "number");
     cJSON_AddNumberToObject(pi, "value", dw_aht20_get_polling_interval());
-    cJSON_AddNumberToObject(pi, "min", 15);
+    cJSON_AddNumberToObject(pi, "min", 0);
     cJSON_AddNumberToObject(pi, "max", 600);
+    cJSON_AddStringToObject(pi, "hint", "Set to 0 to stop all I2C access if the dryer shows E0 (you lose ambient readings until a dedicated sensor is wired).");
     return root;
 }
 
@@ -588,12 +589,15 @@ static esp_err_t setup_apply(const cJSON *values, void *ctx, char *message, size
     // posts only this field, so apply it and return unless MQTT fields came too.
     cJSON *poll = cJSON_GetObjectItem(values, "aht_poll");
     if (cJSON_IsNumber(poll)) {
-        uint32_t v = (uint32_t)poll->valueint;
-        if (v < 15) v = 15;
-        if (v > 600) v = 600;
+        int32_t iv = poll->valueint;
+        if (iv < 0) iv = 0;
+        if (iv > 600) iv = 600;
+        if (iv > 0 && iv < 15) iv = 15;   // 0 = off; otherwise floor at 15s
+        uint32_t v = (uint32_t)iv;
         dw_aht20_set_polling_interval(v);
         if (!cJSON_GetObjectItem(values, "mqtt_enable") && !cJSON_GetObjectItem(values, "mqtt_host")) {
-            snprintf(message, message_size, "Sensor poll interval set to %us.", (unsigned)v);
+            if (v == 0) snprintf(message, message_size, "Ambient sensor disabled (I2C left untouched).");
+            else snprintf(message, message_size, "Sensor poll interval set to %us.", (unsigned)v);
             return ESP_OK;
         }
     }
