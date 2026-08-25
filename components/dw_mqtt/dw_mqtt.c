@@ -99,7 +99,7 @@ static void publish_ha_discovery(void)
     char time_opts[256] = { 0 };
     {
         size_t off = 0;
-        for (int h = 6; h <= 48 && off < sizeof(time_opts) - 6; ++h)
+        for (int h = 6; h <= 48 && off < sizeof(time_opts) - 6; h += 2)
             off += snprintf(time_opts + off, sizeof(time_opts) - off, "%s\"%d\"", h > 6 ? "," : "", h);
     }
     snprintf(disc_topic, sizeof(disc_topic), "homeassistant/select/%s/target_time/config", dev_id);

@@ -119,7 +119,7 @@ esp_err_t dw_device_enqueue(dw_action_type_t type, uint8_t a, uint8_t b)
     // Cheap up-front validation so the caller still gets a synchronous error.
     if (type == DW_ACT_SET_TARGET) {
         if (a != 40 && a != 45 && a != 50) return ESP_ERR_INVALID_ARG;
-        if (b < 6 || b > 48) return ESP_ERR_INVALID_ARG;
+        if (b < 6 || b > 48 || (b % 2) != 0) return ESP_ERR_INVALID_ARG;
     } else if (type == DW_ACT_APPLY_PROFILE) {
         if (a >= DW_PROFILE_COUNT) return ESP_ERR_INVALID_ARG;
     }
@@ -260,15 +260,15 @@ esp_err_t dw_device_press_a(void)
     if (ret == ESP_OK) {
         xSemaphoreTake(s_state_mutex, portMAX_DELAY);
         if (s_state.screen_state == DW_SCREEN_TEMP) {
-            // Cycle temp: 40 -> 45 -> 50 -> 40
-            if (s_state.set_temperature == 40) s_state.set_temperature = 45;
-            else if (s_state.set_temperature == 45) s_state.set_temperature = 50;
-            else s_state.set_temperature = 40;
+            // Cycle temp: 50 -> 40 -> 45 -> 50 (Comgrow order)
+            if (s_state.set_temperature == 50) s_state.set_temperature = 40;
+            else if (s_state.set_temperature == 40) s_state.set_temperature = 45;
+            else s_state.set_temperature = 50;
             dc_evlog_add("A button pressed -> Temp target: %u C", s_state.set_temperature);
         } else if (s_state.screen_state == DW_SCREEN_TIME) {
-            // Cycle time: 6 -> 7 -> ... -> 48 -> 6
+            // Cycle time in 2h steps: 6 -> 8 -> ... -> 48 -> 6
             if (s_state.set_time_hours >= 48) s_state.set_time_hours = 6;
-            else s_state.set_time_hours++;
+            else s_state.set_time_hours += 2;
             s_state.remaining_sec = (uint32_t)s_state.set_time_hours * 3600;
             dc_evlog_add("A button pressed -> Time target: %u h", s_state.set_time_hours);
         }
@@ -296,7 +296,7 @@ esp_err_t dw_device_reset_sequence(void)
     s_state.power_status = true;
     s_state.active_status = false;
     s_state.screen_state = DW_SCREEN_INFO;
-    s_state.set_temperature = 40;
+    s_state.set_temperature = 50;   // SH01 powers on at 50C
     s_state.set_time_hours = 6;
     s_state.elapsed_sec = 0;
     s_state.remaining_sec = 21600;
@@ -314,21 +314,19 @@ esp_err_t dw_device_set_target(uint8_t temp_c, uint8_t time_hours)
         ESP_LOGE(TAG, "Invalid temp target: %d. Allowed: 40, 45, 50", temp_c);
         return ESP_ERR_INVALID_ARG;
     }
-    if (time_hours < 6 || time_hours > 48) {
-        ESP_LOGE(TAG, "Invalid time target: %d. Allowed: 6..48", time_hours);
+    if (time_hours < 6 || time_hours > 48 || (time_hours % 2) != 0) {
+        ESP_LOGE(TAG, "Invalid time target: %d. Allowed: 6..48 in 2h steps", time_hours);
         return ESP_ERR_INVALID_ARG;
     }
 
-    // Step 1: Force known reset state (Power OFF -> Power ON: 40°C / 6h)
+    // Step 1: Force known reset state (Power OFF -> Power ON: 50°C / 6h base)
     dw_device_reset_sequence();
 
-    // Calculate required A-button presses for Temperature from 40°C base
-    uint8_t temp_presses = 0;
-    if (temp_c == 45) temp_presses = 1;
-    else if (temp_c == 50) temp_presses = 2;
+    // A-button presses for Temperature from the 50°C base (cycle 50 -> 40 -> 45)
+    uint8_t temp_presses = (temp_c == 40) ? 1 : (temp_c == 45) ? 2 : 0;
 
-    // Calculate required A-button presses for Time from 6h base
-    uint8_t time_presses = time_hours - 6;
+    // A-button presses for Time from the 6h base (2h steps: 6,8,...,48)
+    uint8_t time_presses = (time_hours - 6) / 2;
 
     // Enter Temperature screen (M press 1)
     dw_device_press_m();
@@ -396,7 +394,7 @@ esp_err_t dw_device_set_profiles(const dw_profile_t *in, size_t count)
         if (in[i].name[0] == '\0') return ESP_ERR_INVALID_ARG;
         if (in[i].temp_c != 40 && in[i].temp_c != 45 && in[i].temp_c != 50)
             return ESP_ERR_INVALID_ARG;
-        if (in[i].time_hours < 6 || in[i].time_hours > 48)
+        if (in[i].time_hours < 6 || in[i].time_hours > 48 || (in[i].time_hours % 2) != 0)
             return ESP_ERR_INVALID_ARG;
     }
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);

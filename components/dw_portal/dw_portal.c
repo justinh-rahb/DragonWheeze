@@ -435,6 +435,7 @@ static esp_err_t profiles_get(httpd_req_t *req)
     cJSON_AddItemToArray(temps, cJSON_CreateNumber(50));
     cJSON_AddNumberToObject(root, "time_min", 6);
     cJSON_AddNumberToObject(root, "time_max", 48);
+    cJSON_AddNumberToObject(root, "time_step", 2);
     return send_json(req, root);
 }
 
