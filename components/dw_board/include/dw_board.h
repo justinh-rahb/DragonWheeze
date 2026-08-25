@@ -11,7 +11,7 @@ extern "C" {
 // Touch optocouplers (active HIGH to drive 4N35 LED through 200 ohm resistor)
 #define DW_GPIO_OPTO_M       GPIO_NUM_4
 #define DW_GPIO_OPTO_A       GPIO_NUM_5
-#define DW_GPIO_OPTO_P       GPIO_NUM_6
+#define DW_GPIO_OPTO_P       GPIO_NUM_10   // power opto is wired to GPIO10 (not 6)
 
 // Power-button physical monitoring (tap off pin 4 of BS813A-1 IC, idle HIGH, active LOW)
 #define DW_GPIO_POWER_SENSE  GPIO_NUM_7
