@@ -93,21 +93,9 @@ void app_main(void)
     ESP_LOGI(TAG, "Starting web portal...");
     dw_portal_start();
 
-    // 8. MQTT & Home Assistant integration (if broker URI configured)
-#if defined(DEV_MQTT_BROKER_URI)
-    dw_mqtt_config_t mqtt_cfg = {
-        .broker_uri = DEV_MQTT_BROKER_URI,
-#  if defined(DEV_MQTT_USER)
-        .username = DEV_MQTT_USER,
-#  endif
-#  if defined(DEV_MQTT_PASS)
-        .password = DEV_MQTT_PASS,
-#  endif
-        .device_name = "DragonWheeze SH01",
-        .device_id = "dragonwheeze_sh01",
-    };
-    dw_mqtt_init(&mqtt_cfg);
-#endif
+    // 8. Home Assistant / MQTT integration — runtime-configured from the web
+    // setup page (persisted in NVS). No-op until a broker is enabled there.
+    dw_mqtt_start("DragonWheeze SH01", "dragonwheeze_sh01");
 
     // 9. Start periodic state machine tick task
     xTaskCreate(tick_task, "dw_tick", 4096, NULL, 5, NULL);

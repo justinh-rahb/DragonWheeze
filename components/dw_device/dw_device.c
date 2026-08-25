@@ -24,9 +24,19 @@ static dw_device_state_t s_state = {
     .elapsed_sec = 0,
     .remaining_sec = 21600,
     .preset = DW_PRESET_PLA,
+    .active_profile = 0,
     .ambient_temp_c = 0.0f,
     .ambient_humidity_rh = 0.0f,
     .physical_power_pressed = false,
+};
+
+// Editable drying profiles. Defaults mirror the original fixed presets; users
+// override name/temp/time from the settings page. Persisted as an NVS blob.
+static dw_profile_t s_profiles[DW_PROFILE_COUNT] = {
+    { "PLA",  45, 6  },
+    { "PETG", 50, 8  },
+    { "TPU",  50, 10 },
+    { "ABS",  50, 12 },
 };
 
 static SemaphoreHandle_t s_state_mutex = NULL;
@@ -88,6 +98,14 @@ esp_err_t dw_device_init(void)
         uint8_t temp = 45, time_h = 6;
         if (nvs_get_u8(h, "temp", &temp) == ESP_OK) s_state.set_temperature = temp;
         if (nvs_get_u8(h, "time_h", &time_h) == ESP_OK) s_state.set_time_hours = time_h;
+        // Restore editable profiles blob (falls back to defaults if absent/wrong size).
+        dw_profile_t saved[DW_PROFILE_COUNT];
+        size_t sz = sizeof(saved);
+        if (nvs_get_blob(h, "profiles", saved, &sz) == ESP_OK && sz == sizeof(saved)) {
+            memcpy(s_profiles, saved, sizeof(s_profiles));
+            for (int i = 0; i < DW_PROFILE_COUNT; ++i)
+                s_profiles[i].name[DW_PROFILE_NAME_MAX - 1] = '\0';
+        }
         nvs_close(h);
     }
 
@@ -314,6 +332,58 @@ esp_err_t dw_device_apply_preset(dw_preset_profile_t preset)
     xSemaphoreGive(s_state_mutex);
 
     dc_evlog_add("Applying preset profile: %s (%u C / %u h)", dw_preset_to_str(preset), temp, time_h);
+    return dw_device_set_target(temp, time_h);
+}
+
+size_t dw_device_get_profiles(dw_profile_t *out, size_t max)
+{
+    if (!out) return 0;
+    size_t n = max < DW_PROFILE_COUNT ? max : DW_PROFILE_COUNT;
+    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+    memcpy(out, s_profiles, n * sizeof(dw_profile_t));
+    xSemaphoreGive(s_state_mutex);
+    return n;
+}
+
+esp_err_t dw_device_set_profiles(const dw_profile_t *in, size_t count)
+{
+    if (!in || count != DW_PROFILE_COUNT) return ESP_ERR_INVALID_ARG;
+    // Validate every profile before committing any (atomic save).
+    for (size_t i = 0; i < count; ++i) {
+        if (in[i].name[0] == '\0') return ESP_ERR_INVALID_ARG;
+        if (in[i].temp_c != 40 && in[i].temp_c != 45 && in[i].temp_c != 50)
+            return ESP_ERR_INVALID_ARG;
+        if (in[i].time_hours < 6 || in[i].time_hours > 12)
+            return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+    memcpy(s_profiles, in, sizeof(s_profiles));
+    for (int i = 0; i < DW_PROFILE_COUNT; ++i)
+        s_profiles[i].name[DW_PROFILE_NAME_MAX - 1] = '\0';
+    xSemaphoreGive(s_state_mutex);
+
+    nvs_handle_t h;
+    if (nvs_open("dw_state", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_blob(h, "profiles", s_profiles, sizeof(s_profiles));
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    dc_evlog_add("Drying profiles updated");
+    return ESP_OK;
+}
+
+esp_err_t dw_device_apply_profile(uint8_t index)
+{
+    if (index >= DW_PROFILE_COUNT) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+    uint8_t temp = s_profiles[index].temp_c;
+    uint8_t time_h = s_profiles[index].time_hours;
+    s_state.active_profile = (int8_t)index;
+    char name[DW_PROFILE_NAME_MAX];
+    memcpy(name, s_profiles[index].name, sizeof(name));
+    xSemaphoreGive(s_state_mutex);
+
+    dc_evlog_add("Applying profile %u: %s (%u C / %u h)", index, name, temp, time_h);
     return dw_device_set_target(temp, time_h);
 }
 
