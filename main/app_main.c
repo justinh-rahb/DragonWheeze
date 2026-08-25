@@ -37,6 +37,28 @@
 
 static const char *TAG = "dragonwheeze";
 
+// Bench convenience: if dev_config.h defines WiFi creds, seed them into NVS on
+// boot when nothing is provisioned yet. User/portal creds always win (we only
+// seed when the ssid key is empty), and it makes the device auto-join even
+// after a hard-boot NVS wipe — no re-entering creds every time.
+static void seed_dev_config(void)
+{
+#ifdef DW_WIFI_SSID
+    nvs_handle_t h;
+    if (nvs_open("app_nvs", NVS_READWRITE, &h) != ESP_OK) return;
+    size_t sz = 0;
+    if (nvs_get_str(h, "ssid", NULL, &sz) == ESP_OK && sz > 1) {
+        nvs_close(h);
+        return;   // already provisioned — don't override
+    }
+    nvs_set_str(h, "ssid", DW_WIFI_SSID);
+    nvs_set_str(h, "password", DW_WIFI_PASS);
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI(TAG, "Seeded WiFi creds from dev_config");
+#endif
+}
+
 static void tick_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -78,6 +100,7 @@ void app_main(void)
     ESP_ERROR_CHECK(dw_device_init());
 
     // 6. Wi-Fi networking bringup via dragon-core dc_wifi
+    seed_dev_config();   // bench: auto-provision creds if none saved
     const dc_wifi_identity_t wifi_identity = {
         .hostname = "dragonwheeze",
         .instance_name = "DragonWheeze",
