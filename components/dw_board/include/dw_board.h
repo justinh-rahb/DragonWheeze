@@ -8,15 +8,15 @@
 extern "C" {
 #endif
 
-// Touch optocouplers (active HIGH to drive 4N35 LED through 200 ohm resistor).
-// Pins per the Simply Maker custom-PCB schematic: Button nets on GPIO5/6/10.
-// (M vs A order to be confirmed on hardware; power is GPIO10, confirmed.)
+// Touch optocouplers (active HIGH). Pins per the Simply Maker ESPHome source:
+//   output1 "Power" = GPIO5, output2 "M" = GPIO6, output3 "A" = GPIO7.
+#define DW_GPIO_OPTO_P       GPIO_NUM_5
 #define DW_GPIO_OPTO_M       GPIO_NUM_6
-#define DW_GPIO_OPTO_A       GPIO_NUM_5
-#define DW_GPIO_OPTO_P       GPIO_NUM_10
+#define DW_GPIO_OPTO_A       GPIO_NUM_7
 
-// This PCB has no power-state sense line; GPIO7 is unused here.
-#define DW_GPIO_POWER_SENSE  GPIO_NUM_7
+// Power-state sense input: ESPHome "Power Touch" binary_sensor on GPIO10
+// (inverted -> touch IC pulls it LOW when powered).
+#define DW_GPIO_POWER_SENSE  GPIO_NUM_10
 
 // AHT sensor I2C bus (J2 connector) per the schematic.
 #define DW_GPIO_I2C_SDA      GPIO_NUM_4
