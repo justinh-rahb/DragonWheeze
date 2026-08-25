@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -42,6 +43,11 @@ static dw_profile_t s_profiles[DW_PROFILE_COUNT] = {
 static SemaphoreHandle_t s_state_mutex = NULL;
 static dw_device_state_cb_t s_cb = NULL;
 static void *s_cb_user_data = NULL;
+
+// Background actuation worker: the physical button dance blocks for seconds, so
+// it must never run on the HTTP/MQTT thread. Requests are queued here.
+typedef struct { uint8_t type, a, b; } dw_action_msg_t;
+static QueueHandle_t s_action_queue = NULL;
 
 static uint32_t s_idle_timer_sec = 0;
 static uint32_t s_screen_timer_sec = 0;
@@ -86,9 +92,46 @@ dw_preset_profile_t dw_preset_from_str(const char *str)
     return DW_PRESET_CUSTOM;
 }
 
+static void dw_action_worker(void *arg)
+{
+    (void)arg;
+    dw_action_msg_t msg;
+    for (;;) {
+        if (xQueueReceive(s_action_queue, &msg, portMAX_DELAY) != pdTRUE) continue;
+        switch ((dw_action_type_t)msg.type) {
+        case DW_ACT_POWER_TOGGLE:  dw_device_toggle_power();            break;
+        case DW_ACT_POWER_ON:      dw_device_set_power(true);           break;
+        case DW_ACT_POWER_OFF:     dw_device_set_power(false);          break;
+        case DW_ACT_START:         dw_device_start_drying();            break;
+        case DW_ACT_STOP:          dw_device_stop_drying();             break;
+        case DW_ACT_RESET:         dw_device_reset_sequence();          break;
+        case DW_ACT_PRESS_M:       dw_device_press_m();                 break;
+        case DW_ACT_PRESS_A:       dw_device_press_a();                 break;
+        case DW_ACT_SET_TARGET:    dw_device_set_target(msg.a, msg.b);  break;
+        case DW_ACT_APPLY_PROFILE: dw_device_apply_profile(msg.a);      break;
+        }
+    }
+}
+
+esp_err_t dw_device_enqueue(dw_action_type_t type, uint8_t a, uint8_t b)
+{
+    if (!s_action_queue) return ESP_ERR_INVALID_STATE;
+    // Cheap up-front validation so the caller still gets a synchronous error.
+    if (type == DW_ACT_SET_TARGET) {
+        if (a != 40 && a != 45 && a != 50) return ESP_ERR_INVALID_ARG;
+        if (b < 6 || b > 48) return ESP_ERR_INVALID_ARG;
+    } else if (type == DW_ACT_APPLY_PROFILE) {
+        if (a >= DW_PROFILE_COUNT) return ESP_ERR_INVALID_ARG;
+    }
+    dw_action_msg_t msg = { (uint8_t)type, a, b };
+    return xQueueSend(s_action_queue, &msg, 0) == pdTRUE ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
 esp_err_t dw_device_init(void)
 {
     s_state_mutex = xSemaphoreCreateMutex();
+    s_action_queue = xQueueCreate(8, sizeof(dw_action_msg_t));
+    xTaskCreate(dw_action_worker, "dw_action", 4096, NULL, 5, NULL);
 
     ESP_LOGI(TAG, "Initializing Sovol SH01 state machine...");
 
@@ -223,8 +266,8 @@ esp_err_t dw_device_press_a(void)
             else s_state.set_temperature = 40;
             dc_evlog_add("A button pressed -> Temp target: %u C", s_state.set_temperature);
         } else if (s_state.screen_state == DW_SCREEN_TIME) {
-            // Cycle time: 6 -> 7 -> 8 -> 9 -> 10 -> 11 -> 12 -> 6
-            if (s_state.set_time_hours >= 12) s_state.set_time_hours = 6;
+            // Cycle time: 6 -> 7 -> ... -> 48 -> 6
+            if (s_state.set_time_hours >= 48) s_state.set_time_hours = 6;
             else s_state.set_time_hours++;
             s_state.remaining_sec = (uint32_t)s_state.set_time_hours * 3600;
             dc_evlog_add("A button pressed -> Time target: %u h", s_state.set_time_hours);
@@ -271,8 +314,8 @@ esp_err_t dw_device_set_target(uint8_t temp_c, uint8_t time_hours)
         ESP_LOGE(TAG, "Invalid temp target: %d. Allowed: 40, 45, 50", temp_c);
         return ESP_ERR_INVALID_ARG;
     }
-    if (time_hours < 6 || time_hours > 12) {
-        ESP_LOGE(TAG, "Invalid time target: %d. Allowed: 6..12", time_hours);
+    if (time_hours < 6 || time_hours > 48) {
+        ESP_LOGE(TAG, "Invalid time target: %d. Allowed: 6..48", time_hours);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -353,7 +396,7 @@ esp_err_t dw_device_set_profiles(const dw_profile_t *in, size_t count)
         if (in[i].name[0] == '\0') return ESP_ERR_INVALID_ARG;
         if (in[i].temp_c != 40 && in[i].temp_c != 45 && in[i].temp_c != 50)
             return ESP_ERR_INVALID_ARG;
-        if (in[i].time_hours < 6 || in[i].time_hours > 12)
+        if (in[i].time_hours < 6 || in[i].time_hours > 48)
             return ESP_ERR_INVALID_ARG;
     }
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);

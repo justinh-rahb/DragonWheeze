@@ -79,6 +79,26 @@ size_t dw_device_get_profiles(dw_profile_t *out, size_t max);
 esp_err_t dw_device_set_profiles(const dw_profile_t *in, size_t count);
 esp_err_t dw_device_apply_profile(uint8_t index);
 
+// Actuations that drive the physical buttons take several seconds (power cycle +
+// M/A pulses). Callers on latency-sensitive threads (the HTTP server, the MQTT
+// client) must NOT run them inline or they starve that thread. Enqueue instead:
+// the request is validated and returns immediately; a background worker runs the
+// button dance. Returns ESP_ERR_INVALID_ARG on bad params, ESP_ERR_NO_MEM if the
+// queue is full.
+typedef enum {
+    DW_ACT_POWER_TOGGLE = 0,
+    DW_ACT_POWER_ON,
+    DW_ACT_POWER_OFF,
+    DW_ACT_START,
+    DW_ACT_STOP,
+    DW_ACT_RESET,
+    DW_ACT_PRESS_M,
+    DW_ACT_PRESS_A,
+    DW_ACT_SET_TARGET,     // a = temp_c, b = time_hours
+    DW_ACT_APPLY_PROFILE,  // a = profile index
+} dw_action_type_t;
+esp_err_t dw_device_enqueue(dw_action_type_t type, uint8_t a, uint8_t b);
+
 // Execute reset sequence (Power OFF -> ON -> M/A button pulses)
 esp_err_t dw_device_reset_sequence(void);
 

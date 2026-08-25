@@ -95,12 +95,18 @@ static void publish_ha_discovery(void)
         dev_id, s_state_topic, s_cmd_topic_prefix, dev_str);
     dc_mqtt_publish(s_mqtt_client, disc_topic, payload, strlen(payload), 1, true);
 
-    // 6. Target Time Select
+    // 6. Target Time Select (6..48 h)
+    char time_opts[256] = { 0 };
+    {
+        size_t off = 0;
+        for (int h = 6; h <= 48 && off < sizeof(time_opts) - 6; ++h)
+            off += snprintf(time_opts + off, sizeof(time_opts) - off, "%s\"%d\"", h > 6 ? "," : "", h);
+    }
     snprintf(disc_topic, sizeof(disc_topic), "homeassistant/select/%s/target_time/config", dev_id);
     snprintf(payload, sizeof(payload),
         "{\"name\":\"Target Duration\",\"unique_id\":\"%s_target_time\",\"stat_t\":\"%s\",\"val_tpl\":\"{{ value_json.target_time }}\","
-        "\"cmd_t\":\"%s/target_time/set\",\"options\":[\"6\",\"7\",\"8\",\"9\",\"10\",\"11\",\"12\"],\"dev\":%s}",
-        dev_id, s_state_topic, s_cmd_topic_prefix, dev_str);
+        "\"cmd_t\":\"%s/target_time/set\",\"options\":[%s],\"dev\":%s}",
+        dev_id, s_state_topic, s_cmd_topic_prefix, time_opts, dev_str);
     dc_mqtt_publish(s_mqtt_client, disc_topic, payload, strlen(payload), 1, true);
 
     // 7. Drying Profile Select — options come from the editable profiles.
@@ -159,32 +165,28 @@ static void handle_mqtt_command(const char *topic, const char *data, int data_le
         strncpy(subtopic, topic + prefix_len + 1, sizeof(subtopic) - 1);
     }
 
+    // Enqueue (never run the multi-second button dance on the MQTT client task).
     if (strcmp(subtopic, "power/set") == 0) {
         bool on = (strcasecmp(payload, "ON") == 0 || strcmp(payload, "1") == 0);
-        dw_device_set_power(on);
+        dw_device_enqueue(on ? DW_ACT_POWER_ON : DW_ACT_POWER_OFF, 0, 0);
     } else if (strcmp(subtopic, "start/set") == 0) {
-        dw_device_start_drying();
+        dw_device_enqueue(DW_ACT_START, 0, 0);
     } else if (strcmp(subtopic, "stop/set") == 0) {
-        dw_device_stop_drying();
+        dw_device_enqueue(DW_ACT_STOP, 0, 0);
     } else if (strcmp(subtopic, "target_temp/set") == 0) {
-        uint8_t temp = (uint8_t)atoi(payload);
         dw_device_state_t cur = dw_device_get_state();
-        dw_device_set_target(temp, cur.set_time_hours);
+        dw_device_enqueue(DW_ACT_SET_TARGET, (uint8_t)atoi(payload), cur.set_time_hours);
     } else if (strcmp(subtopic, "target_time/set") == 0) {
-        uint8_t time_h = (uint8_t)atoi(payload);
         dw_device_state_t cur = dw_device_get_state();
-        dw_device_set_target(cur.set_temperature, time_h);
+        dw_device_enqueue(DW_ACT_SET_TARGET, cur.set_temperature, (uint8_t)atoi(payload));
     } else if (strcmp(subtopic, "profile/set") == 0) {
         dw_profile_t profs[DW_PROFILE_COUNT];
         size_t np = dw_device_get_profiles(profs, DW_PROFILE_COUNT);
         for (size_t i = 0; i < np; ++i) {
-            if (strcmp(profs[i].name, payload) == 0) { dw_device_apply_profile((uint8_t)i); break; }
+            if (strcmp(profs[i].name, payload) == 0) { dw_device_enqueue(DW_ACT_APPLY_PROFILE, (uint8_t)i, 0); break; }
         }
-    } else if (strcmp(subtopic, "preset/set") == 0) {
-        dw_preset_profile_t p = dw_preset_from_str(payload);
-        dw_device_apply_preset(p);
     } else if (strcmp(subtopic, "reset/set") == 0) {
-        dw_device_reset_sequence();
+        dw_device_enqueue(DW_ACT_RESET, 0, 0);
     }
 }
 

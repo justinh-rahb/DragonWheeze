@@ -356,6 +356,9 @@ static esp_err_t command_post(httpd_req_t *req)
     }
 
     const char *cmd = name->valuestring;
+    char cmd_name[24];
+    strncpy(cmd_name, cmd, sizeof(cmd_name) - 1);
+    cmd_name[sizeof(cmd_name) - 1] = '\0';
     esp_err_t err = ESP_OK;
     if (!strcmp(cmd, "set_preset")) {
         cJSON *preset = cJSON_GetObjectItemCaseSensitive(command, "preset");
@@ -363,14 +366,19 @@ static esp_err_t command_post(httpd_req_t *req)
             cJSON_Delete(body);
             return api_error(req, "400 Bad Request", "set_preset requires a preset string");
         }
-        err = dw_device_apply_preset(dw_preset_from_str(preset->valuestring));
+        dw_preset_profile_t p = dw_preset_from_str(preset->valuestring);
+        uint8_t pt = 45, ph = 6;
+        if (p == DW_PRESET_PETG) { pt = 50; ph = 8; }
+        else if (p == DW_PRESET_TPU) { pt = 50; ph = 10; }
+        else if (p == DW_PRESET_ABS) { pt = 50; ph = 12; }
+        err = dw_device_enqueue(DW_ACT_SET_TARGET, pt, ph);
     } else if (!strcmp(cmd, "apply_profile")) {
         cJSON *idx = cJSON_GetObjectItemCaseSensitive(command, "index");
         if (!cJSON_IsNumber(idx)) {
             cJSON_Delete(body);
             return api_error(req, "400 Bad Request", "apply_profile requires an index");
         }
-        err = dw_device_apply_profile((uint8_t)idx->valueint);
+        err = dw_device_enqueue(DW_ACT_APPLY_PROFILE, (uint8_t)idx->valueint, 0);
     } else if (!strcmp(cmd, "set_target")) {
         cJSON *temp = cJSON_GetObjectItemCaseSensitive(command, "temperature");
         cJSON *time_h = cJSON_GetObjectItemCaseSensitive(command, "time_hours");
@@ -378,19 +386,19 @@ static esp_err_t command_post(httpd_req_t *req)
             cJSON_Delete(body);
             return api_error(req, "400 Bad Request", "set_target requires temperature and time_hours");
         }
-        err = dw_device_set_target((uint8_t)temp->valueint, (uint8_t)time_h->valueint);
+        err = dw_device_enqueue(DW_ACT_SET_TARGET, (uint8_t)temp->valueint, (uint8_t)time_h->valueint);
     } else if (!strcmp(cmd, "power_toggle")) {
-        err = dw_device_toggle_power();
+        err = dw_device_enqueue(DW_ACT_POWER_TOGGLE, 0, 0);
     } else if (!strcmp(cmd, "power_on")) {
-        err = dw_device_set_power(true);
+        err = dw_device_enqueue(DW_ACT_POWER_ON, 0, 0);
     } else if (!strcmp(cmd, "power_off")) {
-        err = dw_device_set_power(false);
+        err = dw_device_enqueue(DW_ACT_POWER_OFF, 0, 0);
     } else if (!strcmp(cmd, "start")) {
-        err = dw_device_start_drying();
+        err = dw_device_enqueue(DW_ACT_START, 0, 0);
     } else if (!strcmp(cmd, "stop")) {
-        err = dw_device_stop_drying();
+        err = dw_device_enqueue(DW_ACT_STOP, 0, 0);
     } else if (!strcmp(cmd, "reset")) {
-        err = dw_device_reset_sequence();
+        err = dw_device_enqueue(DW_ACT_RESET, 0, 0);
     } else {
         cJSON_Delete(body);
         return api_error(req, "400 Bad Request", "unknown command");
@@ -399,7 +407,7 @@ static esp_err_t command_post(httpd_req_t *req)
     if (err != ESP_OK) return api_error(req, "409 Conflict", esp_err_to_name(err));
 
     ++s_api_revision;
-    dc_evlog_add("api: cmd=%s", cmd);
+    dc_evlog_add("api: cmd=%s", cmd_name);
     cJSON *reply = cJSON_CreateObject();
     cJSON_AddItemToObject(reply, "state", make_state());
     return send_json(req, reply);
@@ -426,7 +434,7 @@ static esp_err_t profiles_get(httpd_req_t *req)
     cJSON_AddItemToArray(temps, cJSON_CreateNumber(45));
     cJSON_AddItemToArray(temps, cJSON_CreateNumber(50));
     cJSON_AddNumberToObject(root, "time_min", 6);
-    cJSON_AddNumberToObject(root, "time_max", 12);
+    cJSON_AddNumberToObject(root, "time_max", 48);
     return send_json(req, root);
 }
 
