@@ -8,17 +8,19 @@
 extern "C" {
 #endif
 
-// Touch optocouplers (active HIGH to drive 4N35 LED through 200 ohm resistor)
-#define DW_GPIO_OPTO_M       GPIO_NUM_4
+// Touch optocouplers (active HIGH to drive 4N35 LED through 200 ohm resistor).
+// Pins per the Simply Maker custom-PCB schematic: Button nets on GPIO5/6/10.
+// (M vs A order to be confirmed on hardware; power is GPIO10, confirmed.)
+#define DW_GPIO_OPTO_M       GPIO_NUM_6
 #define DW_GPIO_OPTO_A       GPIO_NUM_5
-#define DW_GPIO_OPTO_P       GPIO_NUM_10   // power opto is wired to GPIO10 (not 6)
+#define DW_GPIO_OPTO_P       GPIO_NUM_10
 
-// Power-button physical monitoring (tap off pin 4 of BS813A-1 IC, idle HIGH, active LOW)
+// This PCB has no power-state sense line; GPIO7 is unused here.
 #define DW_GPIO_POWER_SENSE  GPIO_NUM_7
 
-// AHT20 I2C bus (tapped JST-XH connector)
-#define DW_GPIO_I2C_SDA      GPIO_NUM_0
-#define DW_GPIO_I2C_SCL      GPIO_NUM_1
+// AHT sensor I2C bus (J2 connector) per the schematic.
+#define DW_GPIO_I2C_SDA      GPIO_NUM_4
+#define DW_GPIO_I2C_SCL      GPIO_NUM_3
 #define DW_I2C_PORT          I2C_NUM_0
 
 // Initialize board GPIOs (sets up optocoupler outputs & power sense input)
