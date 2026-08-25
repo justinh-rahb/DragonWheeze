@@ -7,9 +7,13 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
 #include <string.h>
 
 static const char *TAG = "dw_aht20";
+
+#define DW_AHT20_NVS_NS   "app_nvs"
+#define DW_AHT20_NVS_KEY  "aht_poll"
 
 #define AHT20_I2C_ADDR         0x38
 #define AHT20_CMD_INIT         0xBE
@@ -20,7 +24,10 @@ static const char *TAG = "dw_aht20";
 
 static dw_aht20_data_t s_latest_data = { .temperature_c = 0.0f, .humidity_rh = 0.0f, .valid = false, .timestamp_ms = 0 };
 static dw_aht20_stats_t s_stats = { 0 };
-static uint32_t s_polling_interval_sec = 10;
+// The AHT20 sits on the I2C bus the SH01 mainboard also drives. Every read is a
+// chance to collide with the mainboard and trip its E0 error, so we poll slowly
+// by default (a filament dryer changes slowly) and let the user tune it.
+static uint32_t s_polling_interval_sec = 120;
 static bool s_initialized = false;
 
 static uint8_t calc_crc8(const uint8_t *ptr, size_t len)
@@ -50,6 +57,14 @@ static esp_err_t aht20_soft_reset(void)
 esp_err_t dw_aht20_init(void)
 {
     ESP_LOGI(TAG, "Initializing AHT20 I2C bus (SDA=%d, SCL=%d)...", DW_GPIO_I2C_SDA, DW_GPIO_I2C_SCL);
+
+    // Restore the persisted poll interval (E0 mitigation knob) if the user set one.
+    nvs_handle_t nh;
+    if (nvs_open(DW_AHT20_NVS_NS, NVS_READONLY, &nh) == ESP_OK) {
+        uint32_t v = 0;
+        if (nvs_get_u32(nh, DW_AHT20_NVS_KEY, &v) == ESP_OK && v >= 1) s_polling_interval_sec = v;
+        nvs_close(nh);
+    }
 
     i2c_config_t conf = {
         .mode = I2C_MODE_MASTER,
@@ -182,6 +197,12 @@ void dw_aht20_set_polling_interval(uint32_t interval_sec)
 {
     if (interval_sec < 1) interval_sec = 1;
     s_polling_interval_sec = interval_sec;
+    nvs_handle_t nh;
+    if (nvs_open(DW_AHT20_NVS_NS, NVS_READWRITE, &nh) == ESP_OK) {
+        nvs_set_u32(nh, DW_AHT20_NVS_KEY, interval_sec);
+        nvs_commit(nh);
+        nvs_close(nh);
+    }
     dc_evlog_add("AHT20: Polling interval set to %lu seconds", (unsigned long)interval_sec);
 }
 
