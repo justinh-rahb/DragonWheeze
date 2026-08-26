@@ -11,11 +11,11 @@ extern "C" {
 // Touch optocouplers (4N35). Per the Simply Maker schematic: GPIO -> 200R ->
 // LED anode (pin1), LED cathode (pin2) -> GND, so drive is ACTIVE-HIGH (GPIO
 // HIGH lights the LED / fires the opto; idle LOW = released). Physical wiring
-// confirmed at the bench: pin5=Power, pin6=A, pin7=M (M/A swapped vs reference).
-// NOTE: U3/U4 (A/M) only work if their pin2 cathode is grounded like U2's.
+// confirmed at the bench: pin5=Power, pin6=M, pin7=A.
+// NOTE: M/A (U3/U4) only work with their pin2 LED cathode grounded like U2's.
 #define DW_GPIO_OPTO_P       GPIO_NUM_5
-#define DW_GPIO_OPTO_A       GPIO_NUM_6
-#define DW_GPIO_OPTO_M       GPIO_NUM_7
+#define DW_GPIO_OPTO_M       GPIO_NUM_6
+#define DW_GPIO_OPTO_A       GPIO_NUM_7
 
 // Opto drive polarity: active-HIGH (LED cathode grounded).
 #define DW_OPTO_LEVEL_PRESSED   1
