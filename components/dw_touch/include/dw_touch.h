@@ -17,8 +17,10 @@ typedef enum {
 } dw_button_t;
 
 #define DW_TOUCH_DEFAULT_PULSE_MS 200
-// All pads (incl. power on GPIO10) register a normal 200ms tap.
 #define DW_TOUCH_POWER_PULSE_MS 200
+// The A/adjust pad's simulated touch wasn't latching at 200ms (M/Power do) —
+// give it a longer touch to see if that's a marginal-touch (vs wiring) issue.
+#define DW_TOUCH_ADJUST_PULSE_MS 450
 #define DW_TOUCH_INTER_PRESS_DELAY_MS 400
 
 // Pulse a touch optocoupler for a given duration (ms) and enforce inter-press delay
