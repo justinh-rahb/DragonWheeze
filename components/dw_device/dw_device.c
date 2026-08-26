@@ -188,7 +188,17 @@ esp_err_t dw_device_set_power(bool power_on)
     if (ret == ESP_OK) {
         xSemaphoreTake(s_state_mutex, portMAX_DELAY);
         s_state.power_status = power_on;
-        if (!power_on) {
+        if (power_on) {
+            // The panel always powers on to its defaults (INFO / 50C / 6h), so
+            // snap the model to that known state — this re-syncs the model to
+            // reality on every power-on, our only reliable sync point.
+            s_state.active_status = false;
+            s_state.screen_state = DW_SCREEN_INFO;
+            s_state.set_temperature = 50;
+            s_state.set_time_hours = 6;
+            s_state.elapsed_sec = 0;
+            s_state.remaining_sec = 6 * 3600;
+        } else {
             s_state.active_status = false;
             s_state.screen_state = DW_SCREEN_INFO;
             s_state.elapsed_sec = 0;
@@ -213,14 +223,10 @@ esp_err_t dw_device_toggle_power(void)
 
 esp_err_t dw_device_press_m(void)
 {
-    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-    if (!s_state.power_status) {
-        xSemaphoreGive(s_state_mutex);
-        ESP_LOGW(TAG, "Cannot press M: device is powered off");
-        return ESP_ERR_INVALID_STATE;
-    }
-    xSemaphoreGive(s_state_mutex);
-
+    // No power guard: GPIO10 can't report steady power state, so the model's
+    // power_status can drift (e.g. after a reboot). Gating M on it silently
+    // dropped presses. A press on an off dryer is harmless (panel ignores it),
+    // so always fire and track optimistically; power-on re-syncs the screen.
     esp_err_t ret = dw_touch_press(DW_BUTTON_MODE);
     if (ret == ESP_OK) {
         xSemaphoreTake(s_state_mutex, portMAX_DELAY);
@@ -249,13 +255,8 @@ esp_err_t dw_device_press_m(void)
 
 esp_err_t dw_device_press_a(void)
 {
-    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-    if (!s_state.power_status) {
-        xSemaphoreGive(s_state_mutex);
-        return ESP_ERR_INVALID_STATE;
-    }
-    xSemaphoreGive(s_state_mutex);
-
+    // No power guard (see dw_device_press_m): the model's power_status can be
+    // stale, and gating on it dropped adjust presses. Always fire.
     esp_err_t ret = dw_touch_press(DW_BUTTON_ADJUST);
     if (ret == ESP_OK) {
         xSemaphoreTake(s_state_mutex, portMAX_DELAY);
