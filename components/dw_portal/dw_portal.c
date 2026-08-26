@@ -2,6 +2,7 @@
 // dw_portal — Web portal integration implementation
 #include "dw_portal.h"
 #include "dw_device.h"
+#include "dw_touch.h"
 #include "dw_aht20.h"
 #include "dw_mqtt.h"
 #include "dc_portal.h"
@@ -232,6 +233,28 @@ static esp_err_t dw_apply_control(const cJSON *values, void *ctx, char *message,
         qe = dw_device_enqueue(DW_ACT_PRESS_M, 0, 0);
     } else if (strcmp(act, "press_a") == 0) {
         qe = dw_device_enqueue(DW_ACT_PRESS_A, 0, 0);
+    } else if (strcmp(act, "pulse") == 0) {
+        // Bench diagnostic: fire ONE raw pulse of a caller-chosen width straight
+        // at a button's optocoupler (bypasses the queue/state machine), to sweep
+        // pulse duration and find the reliable capacitive-touch threshold.
+        cJSON *btn = cJSON_GetObjectItem(values, "button");
+        cJSON *ms  = cJSON_GetObjectItem(values, "ms");
+        if (!cJSON_IsString(btn)) {
+            snprintf(message, message_size, "pulse requires 'button' ('m','a','p') and optional 'ms'");
+            return ESP_ERR_INVALID_ARG;
+        }
+        uint32_t dur = cJSON_IsNumber(ms) ? (uint32_t)ms->valueint : 200;
+        if (dur < 10)   dur = 10;
+        if (dur > 3000) dur = 3000;
+        dw_button_t b;
+        char c = btn->valuestring[0];
+        if (c == 'm' || c == 'M')      b = DW_BUTTON_MODE;
+        else if (c == 'a' || c == 'A') b = DW_BUTTON_ADJUST;
+        else if (c == 'p' || c == 'P') b = DW_BUTTON_POWER;
+        else { snprintf(message, message_size, "pulse 'button' must be m, a, or p"); return ESP_ERR_INVALID_ARG; }
+        esp_err_t pe = dw_touch_pulse(b, dur);
+        snprintf(message, message_size, "pulsed %c for %lums: %s", c, (unsigned long)dur, esp_err_to_name(pe));
+        return pe;
     } else if (strcmp(act, "set_target") == 0) {
         cJSON *temp = cJSON_GetObjectItem(values, "temperature");
         cJSON *time_h = cJSON_GetObjectItem(values, "time_hours");
