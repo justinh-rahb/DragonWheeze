@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -24,14 +25,29 @@ static dw_device_state_t s_state = {
     .elapsed_sec = 0,
     .remaining_sec = 21600,
     .preset = DW_PRESET_PLA,
+    .active_profile = 0,
     .ambient_temp_c = 0.0f,
     .ambient_humidity_rh = 0.0f,
     .physical_power_pressed = false,
 };
 
+// Editable drying profiles. Defaults mirror the original fixed presets; users
+// override name/temp/time from the settings page. Persisted as an NVS blob.
+static dw_profile_t s_profiles[DW_PROFILE_COUNT] = {
+    { "PLA",  45, 6  },
+    { "PETG", 50, 8  },
+    { "TPU",  50, 10 },
+    { "ABS",  50, 12 },
+};
+
 static SemaphoreHandle_t s_state_mutex = NULL;
 static dw_device_state_cb_t s_cb = NULL;
 static void *s_cb_user_data = NULL;
+
+// Background actuation worker: the physical button dance blocks for seconds, so
+// it must never run on the HTTP/MQTT thread. Requests are queued here.
+typedef struct { uint8_t type, a, b; } dw_action_msg_t;
+static QueueHandle_t s_action_queue = NULL;
 
 static uint32_t s_idle_timer_sec = 0;
 static uint32_t s_screen_timer_sec = 0;
@@ -76,9 +92,46 @@ dw_preset_profile_t dw_preset_from_str(const char *str)
     return DW_PRESET_CUSTOM;
 }
 
+static void dw_action_worker(void *arg)
+{
+    (void)arg;
+    dw_action_msg_t msg;
+    for (;;) {
+        if (xQueueReceive(s_action_queue, &msg, portMAX_DELAY) != pdTRUE) continue;
+        switch ((dw_action_type_t)msg.type) {
+        case DW_ACT_POWER_TOGGLE:  dw_device_toggle_power();            break;
+        case DW_ACT_POWER_ON:      dw_device_set_power(true);           break;
+        case DW_ACT_POWER_OFF:     dw_device_set_power(false);          break;
+        case DW_ACT_START:         dw_device_start_drying();            break;
+        case DW_ACT_STOP:          dw_device_stop_drying();             break;
+        case DW_ACT_RESET:         dw_device_reset_sequence();          break;
+        case DW_ACT_PRESS_M:       dw_device_press_m();                 break;
+        case DW_ACT_PRESS_A:       dw_device_press_a();                 break;
+        case DW_ACT_SET_TARGET:    dw_device_set_target(msg.a, msg.b);  break;
+        case DW_ACT_APPLY_PROFILE: dw_device_apply_profile(msg.a);      break;
+        }
+    }
+}
+
+esp_err_t dw_device_enqueue(dw_action_type_t type, uint8_t a, uint8_t b)
+{
+    if (!s_action_queue) return ESP_ERR_INVALID_STATE;
+    // Cheap up-front validation so the caller still gets a synchronous error.
+    if (type == DW_ACT_SET_TARGET) {
+        if (a != 40 && a != 45 && a != 50) return ESP_ERR_INVALID_ARG;
+        if (b < 6 || b > 48 || (b % 2) != 0) return ESP_ERR_INVALID_ARG;
+    } else if (type == DW_ACT_APPLY_PROFILE) {
+        if (a >= DW_PROFILE_COUNT) return ESP_ERR_INVALID_ARG;
+    }
+    dw_action_msg_t msg = { (uint8_t)type, a, b };
+    return xQueueSend(s_action_queue, &msg, 0) == pdTRUE ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
 esp_err_t dw_device_init(void)
 {
     s_state_mutex = xSemaphoreCreateMutex();
+    s_action_queue = xQueueCreate(8, sizeof(dw_action_msg_t));
+    xTaskCreate(dw_action_worker, "dw_action", 4096, NULL, 5, NULL);
 
     ESP_LOGI(TAG, "Initializing Sovol SH01 state machine...");
 
@@ -88,6 +141,14 @@ esp_err_t dw_device_init(void)
         uint8_t temp = 45, time_h = 6;
         if (nvs_get_u8(h, "temp", &temp) == ESP_OK) s_state.set_temperature = temp;
         if (nvs_get_u8(h, "time_h", &time_h) == ESP_OK) s_state.set_time_hours = time_h;
+        // Restore editable profiles blob (falls back to defaults if absent/wrong size).
+        dw_profile_t saved[DW_PROFILE_COUNT];
+        size_t sz = sizeof(saved);
+        if (nvs_get_blob(h, "profiles", saved, &sz) == ESP_OK && sz == sizeof(saved)) {
+            memcpy(s_profiles, saved, sizeof(s_profiles));
+            for (int i = 0; i < DW_PROFILE_COUNT; ++i)
+                s_profiles[i].name[DW_PROFILE_NAME_MAX - 1] = '\0';
+        }
         nvs_close(h);
     }
 
@@ -127,7 +188,17 @@ esp_err_t dw_device_set_power(bool power_on)
     if (ret == ESP_OK) {
         xSemaphoreTake(s_state_mutex, portMAX_DELAY);
         s_state.power_status = power_on;
-        if (!power_on) {
+        if (power_on) {
+            // The panel always powers on to its defaults (INFO / 50C / 6h), so
+            // snap the model to that known state — this re-syncs the model to
+            // reality on every power-on, our only reliable sync point.
+            s_state.active_status = false;
+            s_state.screen_state = DW_SCREEN_INFO;
+            s_state.set_temperature = 50;
+            s_state.set_time_hours = 6;
+            s_state.elapsed_sec = 0;
+            s_state.remaining_sec = 6 * 3600;
+        } else {
             s_state.active_status = false;
             s_state.screen_state = DW_SCREEN_INFO;
             s_state.elapsed_sec = 0;
@@ -152,14 +223,10 @@ esp_err_t dw_device_toggle_power(void)
 
 esp_err_t dw_device_press_m(void)
 {
-    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-    if (!s_state.power_status) {
-        xSemaphoreGive(s_state_mutex);
-        ESP_LOGW(TAG, "Cannot press M: device is powered off");
-        return ESP_ERR_INVALID_STATE;
-    }
-    xSemaphoreGive(s_state_mutex);
-
+    // No power guard: GPIO10 can't report steady power state, so the model's
+    // power_status can drift (e.g. after a reboot). Gating M on it silently
+    // dropped presses. A press on an off dryer is harmless (panel ignores it),
+    // so always fire and track optimistically; power-on re-syncs the screen.
     esp_err_t ret = dw_touch_press(DW_BUTTON_MODE);
     if (ret == ESP_OK) {
         xSemaphoreTake(s_state_mutex, portMAX_DELAY);
@@ -188,26 +255,21 @@ esp_err_t dw_device_press_m(void)
 
 esp_err_t dw_device_press_a(void)
 {
-    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-    if (!s_state.power_status) {
-        xSemaphoreGive(s_state_mutex);
-        return ESP_ERR_INVALID_STATE;
-    }
-    xSemaphoreGive(s_state_mutex);
-
+    // No power guard (see dw_device_press_m): the model's power_status can be
+    // stale, and gating on it dropped adjust presses. Always fire.
     esp_err_t ret = dw_touch_press(DW_BUTTON_ADJUST);
     if (ret == ESP_OK) {
         xSemaphoreTake(s_state_mutex, portMAX_DELAY);
         if (s_state.screen_state == DW_SCREEN_TEMP) {
-            // Cycle temp: 40 -> 45 -> 50 -> 40
-            if (s_state.set_temperature == 40) s_state.set_temperature = 45;
-            else if (s_state.set_temperature == 45) s_state.set_temperature = 50;
-            else s_state.set_temperature = 40;
+            // Cycle temp: 50 -> 40 -> 45 -> 50 (Comgrow order)
+            if (s_state.set_temperature == 50) s_state.set_temperature = 40;
+            else if (s_state.set_temperature == 40) s_state.set_temperature = 45;
+            else s_state.set_temperature = 50;
             dc_evlog_add("A button pressed -> Temp target: %u C", s_state.set_temperature);
         } else if (s_state.screen_state == DW_SCREEN_TIME) {
-            // Cycle time: 6 -> 7 -> 8 -> 9 -> 10 -> 11 -> 12 -> 6
-            if (s_state.set_time_hours >= 12) s_state.set_time_hours = 6;
-            else s_state.set_time_hours++;
+            // Cycle time in 2h steps: 6 -> 8 -> ... -> 48 -> 6
+            if (s_state.set_time_hours >= 48) s_state.set_time_hours = 6;
+            else s_state.set_time_hours += 2;
             s_state.remaining_sec = (uint32_t)s_state.set_time_hours * 3600;
             dc_evlog_add("A button pressed -> Time target: %u h", s_state.set_time_hours);
         }
@@ -220,22 +282,33 @@ esp_err_t dw_device_press_a(void)
 
 esp_err_t dw_device_reset_sequence(void)
 {
-    dc_evlog_add("Executing reset-before-automation sequence...");
-    ESP_LOGI(TAG, "Resetting Sovol dryer state via power cycle...");
+    // Decide from the MODEL's power state, not GPIO10 — that pin is a momentary
+    // touch-detect (only HIGH while a finger/opto is on the pad), not a steady
+    // power-state line, so it reads "off" even when the dryer is running.
+    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+    bool powered = s_state.power_status;
+    xSemaphoreGive(s_state_mutex);
+    dc_evlog_add("Reset: model power=%d — normalizing to ON @ default", powered);
 
-    // Pulse Power button to ensure power OFF
-    dw_touch_press(DW_BUTTON_POWER);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    // Pulse Power button to power ON (default state is 40°C / 6h)
-    dw_touch_press(DW_BUTTON_POWER);
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    if (powered) {
+        // Power-cycle to clear settings back to the default, ending ON.
+        dw_touch_press(DW_BUTTON_POWER);            // -> off
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        dw_touch_press(DW_BUTTON_POWER);            // -> on
+    } else {
+        // Already off: one press powers it on at the default.
+        dw_touch_press(DW_BUTTON_POWER);            // -> on
+    }
+    // Let the panel finish its power-on boot before the M/A dance. The Comgrow
+    // shows an "88:88" all-segments self-test for ~2.5s after power-on and drops
+    // any press that lands during it, so wait comfortably past that window.
+    vTaskDelay(pdMS_TO_TICKS(4000));
 
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);
     s_state.power_status = true;
     s_state.active_status = false;
     s_state.screen_state = DW_SCREEN_INFO;
-    s_state.set_temperature = 40;
+    s_state.set_temperature = 50;   // SH01 powers on at 50C
     s_state.set_time_hours = 6;
     s_state.elapsed_sec = 0;
     s_state.remaining_sec = 21600;
@@ -253,21 +326,19 @@ esp_err_t dw_device_set_target(uint8_t temp_c, uint8_t time_hours)
         ESP_LOGE(TAG, "Invalid temp target: %d. Allowed: 40, 45, 50", temp_c);
         return ESP_ERR_INVALID_ARG;
     }
-    if (time_hours < 6 || time_hours > 12) {
-        ESP_LOGE(TAG, "Invalid time target: %d. Allowed: 6..12", time_hours);
+    if (time_hours < 6 || time_hours > 48 || (time_hours % 2) != 0) {
+        ESP_LOGE(TAG, "Invalid time target: %d. Allowed: 6..48 in 2h steps", time_hours);
         return ESP_ERR_INVALID_ARG;
     }
 
-    // Step 1: Force known reset state (Power OFF -> Power ON: 40°C / 6h)
+    // Step 1: Force known reset state (Power OFF -> Power ON: 50°C / 6h base)
     dw_device_reset_sequence();
 
-    // Calculate required A-button presses for Temperature from 40°C base
-    uint8_t temp_presses = 0;
-    if (temp_c == 45) temp_presses = 1;
-    else if (temp_c == 50) temp_presses = 2;
+    // A-button presses for Temperature from the 50°C base (cycle 50 -> 40 -> 45)
+    uint8_t temp_presses = (temp_c == 40) ? 1 : (temp_c == 45) ? 2 : 0;
 
-    // Calculate required A-button presses for Time from 6h base
-    uint8_t time_presses = time_hours - 6;
+    // A-button presses for Time from the 6h base (2h steps: 6,8,...,48)
+    uint8_t time_presses = (time_hours - 6) / 2;
 
     // Enter Temperature screen (M press 1)
     dw_device_press_m();
@@ -317,6 +388,58 @@ esp_err_t dw_device_apply_preset(dw_preset_profile_t preset)
     return dw_device_set_target(temp, time_h);
 }
 
+size_t dw_device_get_profiles(dw_profile_t *out, size_t max)
+{
+    if (!out) return 0;
+    size_t n = max < DW_PROFILE_COUNT ? max : DW_PROFILE_COUNT;
+    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+    memcpy(out, s_profiles, n * sizeof(dw_profile_t));
+    xSemaphoreGive(s_state_mutex);
+    return n;
+}
+
+esp_err_t dw_device_set_profiles(const dw_profile_t *in, size_t count)
+{
+    if (!in || count != DW_PROFILE_COUNT) return ESP_ERR_INVALID_ARG;
+    // Validate every profile before committing any (atomic save).
+    for (size_t i = 0; i < count; ++i) {
+        if (in[i].name[0] == '\0') return ESP_ERR_INVALID_ARG;
+        if (in[i].temp_c != 40 && in[i].temp_c != 45 && in[i].temp_c != 50)
+            return ESP_ERR_INVALID_ARG;
+        if (in[i].time_hours < 6 || in[i].time_hours > 48 || (in[i].time_hours % 2) != 0)
+            return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+    memcpy(s_profiles, in, sizeof(s_profiles));
+    for (int i = 0; i < DW_PROFILE_COUNT; ++i)
+        s_profiles[i].name[DW_PROFILE_NAME_MAX - 1] = '\0';
+    xSemaphoreGive(s_state_mutex);
+
+    nvs_handle_t h;
+    if (nvs_open("dw_state", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_blob(h, "profiles", s_profiles, sizeof(s_profiles));
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    dc_evlog_add("Drying profiles updated");
+    return ESP_OK;
+}
+
+esp_err_t dw_device_apply_profile(uint8_t index)
+{
+    if (index >= DW_PROFILE_COUNT) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+    uint8_t temp = s_profiles[index].temp_c;
+    uint8_t time_h = s_profiles[index].time_hours;
+    s_state.active_profile = (int8_t)index;
+    char name[DW_PROFILE_NAME_MAX];
+    memcpy(name, s_profiles[index].name, sizeof(name));
+    xSemaphoreGive(s_state_mutex);
+
+    dc_evlog_add("Applying profile %u: %s (%u C / %u h)", index, name, temp, time_h);
+    return dw_device_set_target(temp, time_h);
+}
+
 esp_err_t dw_device_start_drying(void)
 {
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);
@@ -352,9 +475,11 @@ void dw_device_tick_1s(void)
     }
     s_last_phys_btn_state = phys_btn;
 
-    // Handle sensor updates every polling_interval seconds
+    // Handle sensor updates every polling_interval seconds (0 = disabled;
+    // never touch the shared I2C bus, e.g. to stop the SH01 E0 error).
+    uint32_t poll_iv = dw_aht20_get_polling_interval();
     s_sensor_timer_sec++;
-    if (s_sensor_timer_sec >= dw_aht20_get_polling_interval()) {
+    if (poll_iv > 0 && s_sensor_timer_sec >= poll_iv) {
         s_sensor_timer_sec = 0;
         float temp = 0.0f, rh = 0.0f;
         if (dw_aht20_read(&temp, &rh) == ESP_OK) {
@@ -377,7 +502,11 @@ void dw_device_tick_1s(void)
                 s_state.remaining_sec = total_sec - s_state.elapsed_sec;
             }
         } else {
-            // Idle timer: 3-minute power-off timeout on Sovol SH01
+            // Idle timer: the dryer auto-powers-off after ~3 min idle (confirmed
+            // on this Comgrow as well as the Sovol SH01), so mirror that in the
+            // model. Drift only creeps in when power is changed OUTSIDE our
+            // commands (a manual button press the model never saw) — that starts
+            // the hardware's 3-min timer at a different moment than the model's.
             s_idle_timer_sec++;
             if (s_idle_timer_sec >= 180) {
                 s_state.power_status = false;

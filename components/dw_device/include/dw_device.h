@@ -24,6 +24,16 @@ typedef enum {
     DW_PRESET_CUSTOM,
 } dw_preset_profile_t;
 
+// Editable drying profiles. The SH01 only accepts temp ∈ {40,45,50} and
+// time 6..12h, so a profile is just a named shortcut to one of those combos.
+#define DW_PROFILE_COUNT     4
+#define DW_PROFILE_NAME_MAX  16
+typedef struct {
+    char name[DW_PROFILE_NAME_MAX];  // user-set material/type label
+    uint8_t temp_c;                  // 40 / 45 / 50
+    uint8_t time_hours;              // 6..12
+} dw_profile_t;
+
 typedef struct {
     bool power_status;           // Dryer main power ON/OFF
     bool active_status;          // Active drying cycle running
@@ -32,7 +42,8 @@ typedef struct {
     uint8_t set_time_hours;      // Target time hours (6..12)
     uint32_t elapsed_sec;        // Seconds elapsed in current drying cycle
     uint32_t remaining_sec;      // Seconds remaining in current drying cycle
-    dw_preset_profile_t preset;  // Currently active preset profile
+    dw_preset_profile_t preset;  // Legacy fixed preset (v1/MQTT compatibility)
+    int8_t active_profile;       // Index into the editable profiles, -1 = none
     float ambient_temp_c;        // Sensor temp °C
     float ambient_humidity_rh;   // Sensor humidity %RH
     bool physical_power_pressed; // True if physical power button currently held
@@ -62,6 +73,31 @@ esp_err_t dw_device_set_target(uint8_t temp_c, uint8_t time_hours);
 
 // Apply a material preset (PLA, PETG, TPU, ABS)
 esp_err_t dw_device_apply_preset(dw_preset_profile_t preset);
+
+// Editable drying profiles (NVS-persisted). get returns the count written.
+size_t dw_device_get_profiles(dw_profile_t *out, size_t max);
+esp_err_t dw_device_set_profiles(const dw_profile_t *in, size_t count);
+esp_err_t dw_device_apply_profile(uint8_t index);
+
+// Actuations that drive the physical buttons take several seconds (power cycle +
+// M/A pulses). Callers on latency-sensitive threads (the HTTP server, the MQTT
+// client) must NOT run them inline or they starve that thread. Enqueue instead:
+// the request is validated and returns immediately; a background worker runs the
+// button dance. Returns ESP_ERR_INVALID_ARG on bad params, ESP_ERR_NO_MEM if the
+// queue is full.
+typedef enum {
+    DW_ACT_POWER_TOGGLE = 0,
+    DW_ACT_POWER_ON,
+    DW_ACT_POWER_OFF,
+    DW_ACT_START,
+    DW_ACT_STOP,
+    DW_ACT_RESET,
+    DW_ACT_PRESS_M,
+    DW_ACT_PRESS_A,
+    DW_ACT_SET_TARGET,     // a = temp_c, b = time_hours
+    DW_ACT_APPLY_PROFILE,  // a = profile index
+} dw_action_type_t;
+esp_err_t dw_device_enqueue(dw_action_type_t type, uint8_t a, uint8_t b);
 
 // Execute reset sequence (Power OFF -> ON -> M/A button pulses)
 esp_err_t dw_device_reset_sequence(void);

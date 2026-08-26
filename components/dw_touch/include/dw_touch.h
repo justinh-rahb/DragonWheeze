@@ -16,7 +16,12 @@ typedef enum {
     DW_BUTTON_POWER,   // 'P' button (turns dryer power on / off)
 } dw_button_t;
 
+// All pads register on a short tap. (The earlier "power needs a 1s hold" was an
+// artifact of the inverted active-low drive fighting the active-high circuit;
+// with polarity correct, a ~250ms tap powers on cleanly without wedging on 8888.)
 #define DW_TOUCH_DEFAULT_PULSE_MS 200
+#define DW_TOUCH_POWER_PULSE_MS 250
+#define DW_TOUCH_ADJUST_PULSE_MS 200
 #define DW_TOUCH_INTER_PRESS_DELAY_MS 400
 
 // Pulse a touch optocoupler for a given duration (ms) and enforce inter-press delay

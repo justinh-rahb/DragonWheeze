@@ -7,9 +7,13 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
 #include <string.h>
 
 static const char *TAG = "dw_aht20";
+
+#define DW_AHT20_NVS_NS   "app_nvs"
+#define DW_AHT20_NVS_KEY  "aht_poll"
 
 #define AHT20_I2C_ADDR         0x38
 #define AHT20_CMD_INIT         0xBE
@@ -20,8 +24,15 @@ static const char *TAG = "dw_aht20";
 
 static dw_aht20_data_t s_latest_data = { .temperature_c = 0.0f, .humidity_rh = 0.0f, .valid = false, .timestamp_ms = 0 };
 static dw_aht20_stats_t s_stats = { 0 };
-static uint32_t s_polling_interval_sec = 10;
+// The AHT20 sits on the I2C bus the SH01 mainboard also drives, so any access
+// can collide with the mainboard and trip its E0 error. Default to DISABLED
+// (0) — safe on the stock shared-bus wiring. Set a non-zero interval only once
+// the ESP has its own dedicated sensor bus.
+static uint32_t s_polling_interval_sec = 0;
 static bool s_initialized = false;
+// The I2C driver is a one-time global install; only the sensor handshake below
+// is retried. Re-installing an already-installed driver returns ESP_FAIL.
+static bool s_driver_installed = false;
 
 static uint8_t calc_crc8(const uint8_t *ptr, size_t len)
 {
@@ -51,6 +62,20 @@ esp_err_t dw_aht20_init(void)
 {
     ESP_LOGI(TAG, "Initializing AHT20 I2C bus (SDA=%d, SCL=%d)...", DW_GPIO_I2C_SDA, DW_GPIO_I2C_SCL);
 
+    // Restore the persisted poll interval (E0 mitigation knob) if the user set one.
+    // A value of 0 means "disabled" — do not touch the shared I2C bus at all.
+    nvs_handle_t nh;
+    if (nvs_open(DW_AHT20_NVS_NS, NVS_READONLY, &nh) == ESP_OK) {
+        uint32_t v = 0xFFFFFFFF;
+        if (nvs_get_u32(nh, DW_AHT20_NVS_KEY, &v) == ESP_OK) s_polling_interval_sec = v;
+        nvs_close(nh);
+    }
+    if (s_polling_interval_sec == 0) {
+        s_initialized = false;
+        dc_evlog_add("AHT20: polling disabled — leaving the shared I2C bus untouched");
+        return ESP_OK;
+    }
+
     i2c_config_t conf = {
         .mode = I2C_MODE_MASTER,
         .sda_io_num = DW_GPIO_I2C_SDA,
@@ -60,16 +85,20 @@ esp_err_t dw_aht20_init(void)
         .master.clk_speed = 100000, // 100kHz standard mode for bus stability
     };
 
-    esp_err_t ret = i2c_param_config(DW_I2C_PORT, &conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "i2c_param_config failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = i2c_driver_install(DW_I2C_PORT, conf.mode, 0, 0, 0);
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "i2c_driver_install failed: %s", esp_err_to_name(ret));
-        return ret;
+    // Install the bus driver once; later dw_aht20_init() calls (the read-path
+    // recovery) skip this and only redo the sensor handshake below.
+    if (!s_driver_installed) {
+        esp_err_t cfg = i2c_param_config(DW_I2C_PORT, &conf);
+        if (cfg != ESP_OK) {
+            ESP_LOGE(TAG, "i2c_param_config failed: %s", esp_err_to_name(cfg));
+            return cfg;
+        }
+        esp_err_t inst = i2c_driver_install(DW_I2C_PORT, conf.mode, 0, 0, 0);
+        if (inst != ESP_OK && inst != ESP_ERR_INVALID_STATE) {
+            ESP_LOGE(TAG, "i2c_driver_install failed: %s", esp_err_to_name(inst));
+            return inst;
+        }
+        s_driver_installed = true;
     }
 
     vTaskDelay(pdMS_TO_TICKS(40));
@@ -79,7 +108,7 @@ esp_err_t dw_aht20_init(void)
 
     // Check status
     uint8_t status = 0;
-    ret = i2c_master_read_from_device(DW_I2C_PORT, AHT20_I2C_ADDR, &status, 1, pdMS_TO_TICKS(100));
+    esp_err_t ret = i2c_master_read_from_device(DW_I2C_PORT, AHT20_I2C_ADDR, &status, 1, pdMS_TO_TICKS(100));
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read AHT20 status byte: %s", esp_err_to_name(ret));
         dc_evlog_add("AHT20: Init error reading status (%s)", esp_err_to_name(ret));
@@ -180,8 +209,14 @@ dw_aht20_stats_t dw_aht20_get_stats(void)
 
 void dw_aht20_set_polling_interval(uint32_t interval_sec)
 {
-    if (interval_sec < 1) interval_sec = 1;
+    // 0 = disabled (never touch the shared I2C bus). Do NOT clamp it up.
     s_polling_interval_sec = interval_sec;
+    nvs_handle_t nh;
+    if (nvs_open(DW_AHT20_NVS_NS, NVS_READWRITE, &nh) == ESP_OK) {
+        nvs_set_u32(nh, DW_AHT20_NVS_KEY, interval_sec);
+        nvs_commit(nh);
+        nvs_close(nh);
+    }
     dc_evlog_add("AHT20: Polling interval set to %lu seconds", (unsigned long)interval_sec);
 }
 

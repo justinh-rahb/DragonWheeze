@@ -9,7 +9,9 @@ esp_err_t dw_board_init(void)
 {
     ESP_LOGI(TAG, "Initializing hardware GPIO pinout...");
 
-    // Configure optocoupler pulse pins as outputs, initial low (off)
+    // Optocouplers are ACTIVE-HIGH (GPIO HIGH -> LED lit -> opto fires). Idle
+    // LOW = released; a pull-down keeps them released through the boot window
+    // (before this runs) so the pads aren't held down at startup.
     gpio_config_t opto_cfg = {
         .pin_bit_mask = (1ULL << DW_GPIO_OPTO_M) | (1ULL << DW_GPIO_OPTO_A) | (1ULL << DW_GPIO_OPTO_P),
         .mode = GPIO_MODE_OUTPUT,
@@ -20,9 +22,9 @@ esp_err_t dw_board_init(void)
     esp_err_t ret = gpio_config(&opto_cfg);
     if (ret != ESP_OK) return ret;
 
-    gpio_set_level(DW_GPIO_OPTO_M, 0);
-    gpio_set_level(DW_GPIO_OPTO_A, 0);
-    gpio_set_level(DW_GPIO_OPTO_P, 0);
+    gpio_set_level(DW_GPIO_OPTO_M, DW_OPTO_LEVEL_RELEASED);
+    gpio_set_level(DW_GPIO_OPTO_A, DW_OPTO_LEVEL_RELEASED);
+    gpio_set_level(DW_GPIO_OPTO_P, DW_OPTO_LEVEL_RELEASED);
 
     // Configure power sense pin (BS813A-1 pin 4 tap: idle HIGH, active LOW)
     gpio_config_t sense_cfg = {
