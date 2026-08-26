@@ -281,16 +281,23 @@ esp_err_t dw_device_press_a(void)
 
 esp_err_t dw_device_reset_sequence(void)
 {
-    dc_evlog_add("Executing reset-before-automation sequence...");
-    ESP_LOGI(TAG, "Resetting Sovol dryer state via power cycle...");
+    // Closed-loop: read the actual power state (GPIO10 Power-Touch sense) instead
+    // of blindly double-toggling, which left the dryer OFF when it started OFF.
+    bool powered = dw_board_read_power_btn_pressed();
+    dc_evlog_add("Reset: sensed power=%d — normalizing to ON @ default", powered);
 
-    // Pulse Power button to ensure power OFF
-    dw_touch_press(DW_BUTTON_POWER);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    // Pulse Power button to power ON (default state is 40°C / 6h)
-    dw_touch_press(DW_BUTTON_POWER);
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    if (powered) {
+        // Power-cycle to clear settings back to the default, ending ON.
+        dw_touch_press(DW_BUTTON_POWER);            // -> off
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        dw_touch_press(DW_BUTTON_POWER);            // -> on
+    } else {
+        // Already off: one press powers it on at the default.
+        dw_touch_press(DW_BUTTON_POWER);            // -> on
+    }
+    // Let the panel finish its power-on boot before the M/A dance (it drops
+    // presses that arrive during the 88:88 self-test).
+    vTaskDelay(pdMS_TO_TICKS(2500));
 
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);
     s_state.power_status = true;

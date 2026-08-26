@@ -212,23 +212,26 @@ static esp_err_t dw_apply_control(const cJSON *values, void *ctx, char *message,
         return ESP_ERR_INVALID_ARG;
     }
 
+    // All actuations go through the single background worker queue so button
+    // presses serialize and never contend for the touch mutex (dropped pulses).
     const char *act = action->valuestring;
+    esp_err_t qe = ESP_OK;
     if (strcmp(act, "power_toggle") == 0) {
-        dw_device_toggle_power();
+        qe = dw_device_enqueue(DW_ACT_POWER_TOGGLE, 0, 0);
     } else if (strcmp(act, "power_on") == 0) {
-        dw_device_set_power(true);
+        qe = dw_device_enqueue(DW_ACT_POWER_ON, 0, 0);
     } else if (strcmp(act, "power_off") == 0) {
-        dw_device_set_power(false);
+        qe = dw_device_enqueue(DW_ACT_POWER_OFF, 0, 0);
     } else if (strcmp(act, "start") == 0) {
-        dw_device_start_drying();
+        qe = dw_device_enqueue(DW_ACT_START, 0, 0);
     } else if (strcmp(act, "stop") == 0) {
-        dw_device_stop_drying();
+        qe = dw_device_enqueue(DW_ACT_STOP, 0, 0);
     } else if (strcmp(act, "reset") == 0) {
-        dw_device_reset_sequence();
+        qe = dw_device_enqueue(DW_ACT_RESET, 0, 0);
     } else if (strcmp(act, "press_m") == 0) {
-        dw_device_press_m();
+        qe = dw_device_enqueue(DW_ACT_PRESS_M, 0, 0);
     } else if (strcmp(act, "press_a") == 0) {
-        dw_device_press_a();
+        qe = dw_device_enqueue(DW_ACT_PRESS_A, 0, 0);
     } else if (strcmp(act, "set_target") == 0) {
         cJSON *temp = cJSON_GetObjectItem(values, "temperature");
         cJSON *time_h = cJSON_GetObjectItem(values, "time_hours");
@@ -236,17 +239,26 @@ static esp_err_t dw_apply_control(const cJSON *values, void *ctx, char *message,
             snprintf(message, message_size, "set_target requires 'temperature' and 'time_hours' numbers");
             return ESP_ERR_INVALID_ARG;
         }
-        dw_device_set_target((uint8_t)temp->valueint, (uint8_t)time_h->valueint);
+        qe = dw_device_enqueue(DW_ACT_SET_TARGET, (uint8_t)temp->valueint, (uint8_t)time_h->valueint);
     } else if (strcmp(act, "set_preset") == 0) {
         cJSON *preset = cJSON_GetObjectItem(values, "preset");
         if (!cJSON_IsString(preset)) {
             snprintf(message, message_size, "set_preset requires 'preset' string (PLA, PETG, TPU, ABS)");
             return ESP_ERR_INVALID_ARG;
         }
-        dw_device_apply_preset(dw_preset_from_str(preset->valuestring));
+        dw_preset_profile_t p = dw_preset_from_str(preset->valuestring);
+        uint8_t pt = 45, ph = 6;
+        if (p == DW_PRESET_PETG) { pt = 50; ph = 8; }
+        else if (p == DW_PRESET_TPU) { pt = 50; ph = 10; }
+        else if (p == DW_PRESET_ABS) { pt = 50; ph = 12; }
+        qe = dw_device_enqueue(DW_ACT_SET_TARGET, pt, ph);
     } else {
         snprintf(message, message_size, "Unknown action: %s", act);
         return ESP_ERR_INVALID_ARG;
+    }
+    if (qe != ESP_OK) {
+        snprintf(message, message_size, "Busy — action queue full, try again");
+        return qe;
     }
 
     snprintf(message, message_size, "Action %s applied successfully", act);
