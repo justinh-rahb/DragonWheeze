@@ -16,10 +16,11 @@ typedef enum {
     DW_BUTTON_POWER,   // 'P' button (turns dryer power on / off)
 } dw_button_t;
 
-// All pads latch on a 200ms tap. (A's failure to register at 200ms/450ms was a
-// wiring/ground fault on the A channel, not a pulse-duration issue.)
+// M and A register on a 200ms tap. POWER is different: turning the dryer on is
+// a press-and-HOLD (a finger has to stay on the pad ~1s), so a 200ms tap never
+// actuated it while a ~1s hold does. Give power a proper hold duration.
 #define DW_TOUCH_DEFAULT_PULSE_MS 200
-#define DW_TOUCH_POWER_PULSE_MS 200
+#define DW_TOUCH_POWER_PULSE_MS 1000
 #define DW_TOUCH_ADJUST_PULSE_MS 200
 #define DW_TOUCH_INTER_PRESS_DELAY_MS 400
 

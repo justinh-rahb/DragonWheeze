@@ -8,11 +8,17 @@
 extern "C" {
 #endif
 
-// Touch optocouplers (active HIGH). Pins per the Simply Maker ESPHome source:
-//   output1 "Power" = GPIO5, output2 "M" = GPIO6, output3 "A" = GPIO7.
+// Touch optocouplers. Modules are ACTIVE-LOW (IN pulled LOW = opto fires; idle
+// HIGH = released) and powered from a VCC pin, not the GPIO. Physical wiring
+// confirmed at the bench: pin5=Power, pin6=A, pin7=M (M/A are swapped vs the
+// Simply Maker reference). Idle/press levels live in dw_board.c + dw_touch.c.
 #define DW_GPIO_OPTO_P       GPIO_NUM_5
-#define DW_GPIO_OPTO_M       GPIO_NUM_6
-#define DW_GPIO_OPTO_A       GPIO_NUM_7
+#define DW_GPIO_OPTO_A       GPIO_NUM_6
+#define DW_GPIO_OPTO_M       GPIO_NUM_7
+
+// Opto drive polarity: active-LOW modules.
+#define DW_OPTO_LEVEL_PRESSED   0
+#define DW_OPTO_LEVEL_RELEASED  1
 
 // Power-state sense input: ESPHome "Power Touch" binary_sensor on GPIO10
 // (inverted -> touch IC pulls it LOW when powered).

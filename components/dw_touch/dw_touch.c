@@ -50,11 +50,11 @@ esp_err_t dw_touch_pulse(dw_button_t button, uint32_t pulse_duration_ms)
 
     ESP_LOGD(TAG, "Pulsing touch button %s for %lu ms", get_button_name(button), (unsigned long)pulse_duration_ms);
 
-    // Optocoupler is active-HIGH: drive HIGH to light the LED (press), then
-    // return LOW to release.
-    gpio_set_level(gpio, 1);
+    // Optocoupler module is active-LOW: drive LOW to fire the opto (press), then
+    // return HIGH to release.
+    gpio_set_level(gpio, DW_OPTO_LEVEL_PRESSED);
     vTaskDelay(pdMS_TO_TICKS(pulse_duration_ms));
-    gpio_set_level(gpio, 0);
+    gpio_set_level(gpio, DW_OPTO_LEVEL_RELEASED);
 
     // Inter-press delay to allow capacitive controller to settle
     vTaskDelay(pdMS_TO_TICKS(DW_TOUCH_INTER_PRESS_DELAY_MS));
