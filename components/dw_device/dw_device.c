@@ -298,9 +298,10 @@ esp_err_t dw_device_reset_sequence(void)
         // Already off: one press powers it on at the default.
         dw_touch_press(DW_BUTTON_POWER);            // -> on
     }
-    // Let the panel finish its power-on boot before the M/A dance (it drops
-    // presses that arrive during the 88:88 self-test).
-    vTaskDelay(pdMS_TO_TICKS(2500));
+    // Let the panel finish its power-on boot before the M/A dance. The Comgrow
+    // shows an "88:88" all-segments self-test for ~2.5s after power-on and drops
+    // any press that lands during it, so wait comfortably past that window.
+    vTaskDelay(pdMS_TO_TICKS(4000));
 
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);
     s_state.power_status = true;
@@ -500,7 +501,11 @@ void dw_device_tick_1s(void)
                 s_state.remaining_sec = total_sec - s_state.elapsed_sec;
             }
         } else {
-            // Idle timer: 3-minute power-off timeout on Sovol SH01
+            // Idle timer: the dryer auto-powers-off after ~3 min idle (confirmed
+            // on this Comgrow as well as the Sovol SH01), so mirror that in the
+            // model. Drift only creeps in when power is changed OUTSIDE our
+            // commands (a manual button press the model never saw) — that starts
+            // the hardware's 3-min timer at a different moment than the model's.
             s_idle_timer_sec++;
             if (s_idle_timer_sec >= 180) {
                 s_state.power_status = false;
