@@ -281,10 +281,13 @@ esp_err_t dw_device_press_a(void)
 
 esp_err_t dw_device_reset_sequence(void)
 {
-    // Closed-loop: read the actual power state (GPIO10 Power-Touch sense) instead
-    // of blindly double-toggling, which left the dryer OFF when it started OFF.
-    bool powered = dw_board_read_power_btn_pressed();
-    dc_evlog_add("Reset: sensed power=%d — normalizing to ON @ default", powered);
+    // Decide from the MODEL's power state, not GPIO10 — that pin is a momentary
+    // touch-detect (only HIGH while a finger/opto is on the pad), not a steady
+    // power-state line, so it reads "off" even when the dryer is running.
+    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+    bool powered = s_state.power_status;
+    xSemaphoreGive(s_state_mutex);
+    dc_evlog_add("Reset: model power=%d — normalizing to ON @ default", powered);
 
     if (powered) {
         // Power-cycle to clear settings back to the default, ending ON.
