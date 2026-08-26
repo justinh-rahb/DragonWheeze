@@ -53,6 +53,10 @@ static void seed_dev_config(void)
     }
     nvs_set_str(h, "ssid", DW_WIFI_SSID);
     nvs_set_str(h, "password", DW_WIFI_PASS);
+    // Default this board to FALLBACK AP mode (3): STA-only while connected (no
+    // concurrent AP fighting the C3's radio → reliable joins), portal only if
+    // STA fails. Only seeded on a fresh NVS; a user's later choice wins.
+    nvs_set_u8(h, "ap_mode", 3);   // DC_WIFI_AP_FALLBACK
     nvs_commit(h);
     nvs_close(h);
     ESP_LOGI(TAG, "Seeded WiFi creds from dev_config");
