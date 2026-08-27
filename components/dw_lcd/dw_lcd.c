@@ -110,44 +110,34 @@ static void decode_frame(const uint8_t *bits, size_t n)
     }
 }
 
-// Gated capture: the TM1621 serial is busy enough that leaving the edge ISRs
-// always-on starves WiFi on the single-core C3. Instead, open a short capture
-// window every ~1s (the display changes slowly), so the average ISR load is a
-// few percent and WiFi stays stable.
-#define DW_LCD_CAPTURE_MS   60      // interrupts ON — snapshot the bus
-#define DW_LCD_PERIOD_MS  1000      // one snapshot per second
-#define DW_LCD_STARTUP_MS 6000      // let WiFi connect before we ever enable ISRs
+// Continuous capture. The MCU only writes the TM1621 when the display CHANGES,
+// so we must be listening whenever it does — a periodic window misses the
+// transient writes. The ISRs are tiny (an IRAM register read + ring push, ~a few
+// percent CPU), so this coexists with WiFi fine now that they're IRAM-safe. We
+// keep them OFF for the first few seconds so the WiFi join isn't competing for
+// CPU, then run continuously.
+#define DW_LCD_STARTUP_MS 3000
 
 static void lcd_task(void *arg)
 {
     (void)arg;
     static uint8_t frame[320];
+    size_t fn = 0;
+    bool in_frame = false;
 
-    vTaskDelay(pdMS_TO_TICKS(DW_LCD_STARTUP_MS));   // WiFi first
+    vTaskDelay(pdMS_TO_TICKS(DW_LCD_STARTUP_MS));   // let WiFi connect first
+    gpio_intr_enable(s_wr);
+    gpio_intr_enable(s_cs);
 
     for (;;) {
-        // Fresh window: drop any stale ring bytes, then let the ISRs run briefly.
-        s_tail = s_head;
-        gpio_intr_enable(s_wr);
-        gpio_intr_enable(s_cs);
-        vTaskDelay(pdMS_TO_TICKS(DW_LCD_CAPTURE_MS));
-        gpio_intr_disable(s_wr);
-        gpio_intr_disable(s_cs);
-
-        // Decode everything captured this window into the RAM shadow.
-        size_t fn = 0;
-        bool in_frame = false;
-        while (s_tail != s_head) {
-            uint8_t v = s_ring[s_tail];
-            s_tail = (s_tail + 1) & (RING_SZ - 1);
-            switch (v) {
-            case B_START: fn = 0; in_frame = true; break;
-            case B_END:   if (in_frame) decode_frame(frame, fn); in_frame = false; break;
-            default:      if (in_frame && fn < sizeof(frame)) frame[fn++] = v; break;
-            }
+        if (s_tail == s_head) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
+        uint8_t v = s_ring[s_tail];
+        s_tail = (s_tail + 1) & (RING_SZ - 1);
+        switch (v) {
+        case B_START: fn = 0; in_frame = true; break;
+        case B_END:   if (in_frame) decode_frame(frame, fn); in_frame = false; break;
+        default:      if (in_frame && fn < sizeof(frame)) frame[fn++] = v; break;
         }
-
-        vTaskDelay(pdMS_TO_TICKS(DW_LCD_PERIOD_MS - DW_LCD_CAPTURE_MS));
     }
 }
 
