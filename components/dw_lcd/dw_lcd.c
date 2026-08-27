@@ -18,7 +18,18 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_attr.h"
+#include "soc/soc.h"
+#include "soc/gpio_reg.h"
 #include <string.h>
+
+// IRAM-safe pin read: a direct GPIO input-register access, NO function call into
+// flash. gpio_get_level() lives in flash, and calling it from an ISR that fires
+// while the flash cache is momentarily disabled (e.g. during WiFi PHY init)
+// causes a cache-error panic. GPIO0..21 (incl. our CS/WR/DATA) live in GPIO_IN_REG.
+static inline int IRAM_ATTR pin_level(gpio_num_t p)
+{
+    return (REG_READ(GPIO_IN_REG) >> (int)p) & 1;
+}
 
 static const char *TAG = "dw_lcd";
 
@@ -46,14 +57,14 @@ static inline void IRAM_ATTR ring_push(uint8_t v)
 static void IRAM_ATTR wr_isr(void *arg)
 {
     (void)arg;
-    if (gpio_get_level(s_cs) == 0)                 // only capture while selected
-        ring_push(gpio_get_level(s_data) ? B_ONE : B_ZERO);
+    if (pin_level(s_cs) == 0)                       // only capture while selected
+        ring_push(pin_level(s_data) ? B_ONE : B_ZERO);
 }
 
 static void IRAM_ATTR cs_isr(void *arg)
 {
     (void)arg;
-    ring_push(gpio_get_level(s_cs) ? B_END : B_START);
+    ring_push(pin_level(s_cs) ? B_END : B_START);
 }
 
 // ---- task-side state ----
