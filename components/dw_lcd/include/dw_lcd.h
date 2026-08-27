@@ -47,12 +47,13 @@ bool dw_lcd_is_live(void);
 // screens (~5s): temp/humidity ("TT°C HH%") and time-remaining ("HH:MM").
 // A field is valid only when its screen is currently shown; check the flags.
 typedef struct {
-    bool is_time;      // true = time screen shown, false = temp/humidity screen
-    bool has_temp;     // temp/humidity screen: temperature digits valid
-    bool has_humidity; // temp/humidity screen: humidity digits valid
+    bool is_time;      // true = time screen shown
+    bool is_setpoint;  // true = temperature setpoint screen (temp only, no humidity)
+    bool has_temp;     // temperature digits valid (running temp/humidity OR setpoint)
+    bool has_humidity; // humidity digits valid (running temp/humidity screen)
     bool has_time;     // time screen: HH:MM valid
-    int  temp_c;       // °C (temp/humidity screen)
-    int  humidity;     // %RH (temp/humidity screen)
+    int  temp_c;       // °C
+    int  humidity;     // %RH
     int  hours;        // HH (time screen)
     int  minutes;      // MM (time screen)
 } dw_lcd_readout_t;

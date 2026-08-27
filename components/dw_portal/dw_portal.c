@@ -410,7 +410,8 @@ static esp_err_t lcd_get(httpd_req_t *req)
     dw_lcd_readout_t ro;
     dw_lcd_get_readout(&ro);
     cJSON *dec = cJSON_AddObjectToObject(root, "decoded");
-    cJSON_AddStringToObject(dec, "screen", ro.is_time ? "time" : "temp_humidity");
+    cJSON_AddStringToObject(dec, "screen",
+        ro.is_setpoint ? "temp_setpoint" : (ro.is_time ? "time" : "temp_humidity"));
     if (ro.has_temp)     cJSON_AddNumberToObject(dec, "temp_c", ro.temp_c);
     if (ro.has_humidity) cJSON_AddNumberToObject(dec, "humidity", ro.humidity);
     if (ro.has_time) {

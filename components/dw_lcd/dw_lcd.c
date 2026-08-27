@@ -162,9 +162,11 @@ static void lcd_dump_task(void *arg)
                 hex[DW_LCD_RAM_ADDRS] = '\0';
                 dw_lcd_readout_t ro;
                 dw_lcd_get_readout(&ro);
-                if (ro.is_time && ro.has_time)
+                if (ro.has_time)
                     ESP_LOGW(TAG, "LCD= %s  => TIME %02d:%02d", hex, ro.hours, ro.minutes);
-                else if (!ro.is_time && (ro.has_temp || ro.has_humidity))
+                else if (ro.is_setpoint && ro.has_temp)
+                    ESP_LOGW(TAG, "LCD= %s  => SET %dC", hex, ro.temp_c);
+                else if (ro.has_temp || ro.has_humidity)
                     ESP_LOGW(TAG, "LCD= %s  => %dC %d%%", hex, ro.temp_c, ro.humidity);
                 else
                     ESP_LOGW(TAG, "LCD= %s", hex);
@@ -254,23 +256,24 @@ bool dw_lcd_get_readout(dw_lcd_readout_t *out)
     memset(out, 0, sizeof(*out));
     int d0 = decode_digit(0), d1 = decode_digit(1);
     int d2 = decode_digit(2), d3 = decode_digit(3);
-    // Screen type from the "%" humidity symbol (a14 bit1): steady, unlike the
-    // colon which blinks — a blinking-off colon used to make the time screen
-    // (e.g. 07:55) misdecode as "07C 55%".
-    bool is_th = (s_ram[14] >> 1) & 1;
+    bool p01 = (d0 >= 0 && d1 >= 0);   // left pair (temp / hours)
+    bool p23 = (d2 >= 0 && d3 >= 0);   // right pair (humidity / minutes)
+    // "%" humidity symbol (a14 bit1) is steady and present only on the running
+    // temp/humidity screen — a reliable discriminator (the colon blinks, so it
+    // can't be used: a blinking-off colon made a time screen misread as temp).
+    bool pct = (s_ram[14] >> 1) & 1;
 
-    out->is_time = !is_th;
-    if (is_th) {
-        if (d0 >= 0 && d1 >= 0) {
-            int t = d0 * 10 + d1;
-            if (t <= 99) { out->has_temp = true; out->temp_c = t; }
-        }
-        if (d2 >= 0 && d3 >= 0) {
-            int h = d2 * 10 + d3;
-            if (h <= 99) { out->has_humidity = true; out->humidity = h; }
-        }
-    } else {
-        if (d0 >= 0 && d1 >= 0 && d2 >= 0 && d3 >= 0) {
+    if (pct) {                                     // running temp/humidity screen
+        out->is_time = false;
+        if (p01) { int t = d0 * 10 + d1; if (t <= 99) { out->has_temp = true; out->temp_c = t; } }
+        if (p23) { int h = d2 * 10 + d3; if (h <= 99) { out->has_humidity = true; out->humidity = h; } }
+    } else if (p01 && !p23) {                      // temperature SETPOINT screen
+        out->is_setpoint = true;                   // temp shown, humidity blank
+        int t = d0 * 10 + d1;
+        if (t <= 99) { out->has_temp = true; out->temp_c = t; }
+    } else {                                        // time screen (setpoint or countdown)
+        out->is_time = true;
+        if (p01 && p23) {
             int hh = d0 * 10 + d1, mm = d2 * 10 + d3;
             if (mm <= 59 && hh <= 99) {            // reject transition frames
                 out->has_time = true;
