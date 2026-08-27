@@ -83,9 +83,11 @@ static void decode_frame(const uint8_t *bits, size_t n)
         for (int i = 0; i < 6; i++) addr = (uint8_t)((addr << 1) | bits[3 + i]);
         size_t i = 9;
         while (i + 4 <= n) {                         // 4-bit data nibbles
+            // Datasheet WRITE format: 101 a5..a0 d0 d1 d2 d3 — data is sent
+            // d0 FIRST (LSB-first). Store so bit0 = d0 (RAM data D0..D3).
             uint8_t nib = 0;
-            for (int b = 0; b < 4; b++) nib = (uint8_t)((nib << 1) | bits[i + b]);
-            if (addr < DW_LCD_RAM_ADDRS) s_ram[addr] = nib;   // bit order TBD; fix by correlation
+            for (int b = 0; b < 4; b++) nib |= (uint8_t)(bits[i + b] << b);
+            if (addr < DW_LCD_RAM_ADDRS) s_ram[addr] = nib;
             addr++;
             i += 4;
         }
