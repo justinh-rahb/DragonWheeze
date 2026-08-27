@@ -99,22 +99,44 @@ static void decode_frame(const uint8_t *bits, size_t n)
     }
 }
 
+// Gated capture: the TM1621 serial is busy enough that leaving the edge ISRs
+// always-on starves WiFi on the single-core C3. Instead, open a short capture
+// window every ~1s (the display changes slowly), so the average ISR load is a
+// few percent and WiFi stays stable.
+#define DW_LCD_CAPTURE_MS   60      // interrupts ON — snapshot the bus
+#define DW_LCD_PERIOD_MS  1000      // one snapshot per second
+#define DW_LCD_STARTUP_MS 6000      // let WiFi connect before we ever enable ISRs
+
 static void lcd_task(void *arg)
 {
     (void)arg;
     static uint8_t frame[320];
-    size_t fn = 0;
-    bool in_frame = false;
+
+    vTaskDelay(pdMS_TO_TICKS(DW_LCD_STARTUP_MS));   // WiFi first
 
     for (;;) {
-        if (s_tail == s_head) { vTaskDelay(pdMS_TO_TICKS(15)); continue; }
-        uint8_t v = s_ring[s_tail];
-        s_tail = (s_tail + 1) & (RING_SZ - 1);
-        switch (v) {
-        case B_START: fn = 0; in_frame = true; break;
-        case B_END:   if (in_frame) decode_frame(frame, fn); in_frame = false; break;
-        default:      if (in_frame && fn < sizeof(frame)) frame[fn++] = v; break;
+        // Fresh window: drop any stale ring bytes, then let the ISRs run briefly.
+        s_tail = s_head;
+        gpio_intr_enable(s_wr);
+        gpio_intr_enable(s_cs);
+        vTaskDelay(pdMS_TO_TICKS(DW_LCD_CAPTURE_MS));
+        gpio_intr_disable(s_wr);
+        gpio_intr_disable(s_cs);
+
+        // Decode everything captured this window into the RAM shadow.
+        size_t fn = 0;
+        bool in_frame = false;
+        while (s_tail != s_head) {
+            uint8_t v = s_ring[s_tail];
+            s_tail = (s_tail + 1) & (RING_SZ - 1);
+            switch (v) {
+            case B_START: fn = 0; in_frame = true; break;
+            case B_END:   if (in_frame) decode_frame(frame, fn); in_frame = false; break;
+            default:      if (in_frame && fn < sizeof(frame)) frame[fn++] = v; break;
+            }
         }
+
+        vTaskDelay(pdMS_TO_TICKS(DW_LCD_PERIOD_MS - DW_LCD_CAPTURE_MS));
     }
 }
 
@@ -139,6 +161,8 @@ esp_err_t dw_lcd_init(gpio_num_t cs, gpio_num_t wr, gpio_num_t data)
     if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) return e;   // ok if already installed
     gpio_isr_handler_add(wr, wr_isr, NULL);
     gpio_isr_handler_add(cs, cs_isr, NULL);
+    gpio_intr_disable(wr);          // stay OFF until the gated task opens a window
+    gpio_intr_disable(cs);
 
     xTaskCreate(lcd_task, "dw_lcd", 4096, NULL, 6, NULL);
     ESP_LOGI(TAG, "HT1621 sniffer up: CS=%d WR=%d DATA=%d", (int)cs, (int)wr, (int)data);
