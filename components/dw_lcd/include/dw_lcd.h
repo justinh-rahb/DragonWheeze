@@ -43,6 +43,24 @@ size_t dw_lcd_get_last_frame_bits(char *out, size_t out_sz);
 // Whether any traffic has been decoded (tap wired & MCU talking).
 bool dw_lcd_is_live(void);
 
+// Decoded human-readable state of the dryer's LCD. The display alternates two
+// screens (~5s): temp/humidity ("TT°C HH%") and time-remaining ("HH:MM").
+// A field is valid only when its screen is currently shown; check the flags.
+typedef struct {
+    bool is_time;      // true = time screen shown, false = temp/humidity screen
+    bool has_temp;     // temp/humidity screen: temperature digits valid
+    bool has_humidity; // temp/humidity screen: humidity digits valid
+    bool has_time;     // time screen: HH:MM valid
+    int  temp_c;       // °C (temp/humidity screen)
+    int  humidity;     // %RH (temp/humidity screen)
+    int  hours;        // HH (time screen)
+    int  minutes;      // MM (time screen)
+} dw_lcd_readout_t;
+
+// Decode the current display RAM into temp/humidity or time. Returns true if the
+// screen type was recognized (at least one field populated).
+bool dw_lcd_get_readout(dw_lcd_readout_t *out);
+
 #ifdef __cplusplus
 }
 #endif

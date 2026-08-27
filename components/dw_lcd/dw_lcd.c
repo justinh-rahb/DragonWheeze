@@ -160,7 +160,14 @@ static void lcd_dump_task(void *arg)
             if (++stable == 3 && memcmp(now, logged, sizeof(now)) != 0) {
                 for (int i = 0; i < DW_LCD_RAM_ADDRS; i++) hex[i] = "0123456789abcdef"[now[i] & 0xF];
                 hex[DW_LCD_RAM_ADDRS] = '\0';
-                ESP_LOGW(TAG, "LCD= %s", hex);
+                dw_lcd_readout_t ro;
+                dw_lcd_get_readout(&ro);
+                if (ro.is_time && ro.has_time)
+                    ESP_LOGW(TAG, "LCD= %s  => TIME %02d:%02d", hex, ro.hours, ro.minutes);
+                else if (!ro.is_time && (ro.has_temp || ro.has_humidity))
+                    ESP_LOGW(TAG, "LCD= %s  => %dC %d%%", hex, ro.temp_c, ro.humidity);
+                else
+                    ESP_LOGW(TAG, "LCD= %s", hex);
                 memcpy(logged, now, sizeof(now));
             }
         } else {
@@ -219,3 +226,46 @@ size_t dw_lcd_get_last_frame_bits(char *out, size_t out_sz)
 }
 
 bool dw_lcd_is_live(void) { return s_live; }
+
+// ---- display decode (reverse-engineered TM1621 segment map) ----
+// The LCD is 4 digits, COM-multiplexed: digit position p (0=leftmost..3) reads
+// bit p of each segment's RAM address. Segment -> RAM address (a,b,c,d,e,f,g):
+static const uint8_t SEG_ADDR[7] = { 0, 1, 2, 3, 4, 5, 13 };
+// 7-seg bitmask (bit0=a .. bit6=g) for digits 0-9:
+static const uint8_t SEG_DIGIT[10] = {
+    0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F
+};
+
+// Decode one digit position (0-3). Returns 0-9, or -1 if blank/unrecognized.
+static int decode_digit(int pos)
+{
+    uint8_t seg = 0;
+    for (int s = 0; s < 7; s++)
+        if ((s_ram[SEG_ADDR[s]] >> pos) & 1) seg |= (uint8_t)(1 << s);
+    if (seg == 0) return -1;                      // blank position
+    for (int d = 0; d < 10; d++)
+        if (SEG_DIGIT[d] == seg) return d;
+    return -1;                                    // unrecognized (transition frame)
+}
+
+bool dw_lcd_get_readout(dw_lcd_readout_t *out)
+{
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    int d0 = decode_digit(0), d1 = decode_digit(1);
+    int d2 = decode_digit(2), d3 = decode_digit(3);
+    bool colon = (s_ram[15] >> 0) & 1;            // set on the time screen
+
+    out->is_time = colon;
+    if (colon) {
+        if (d0 >= 0 && d1 >= 0 && d2 >= 0 && d3 >= 0) {
+            out->has_time = true;
+            out->hours   = d0 * 10 + d1;
+            out->minutes = d2 * 10 + d3;
+        }
+    } else {
+        if (d0 >= 0 && d1 >= 0) { out->has_temp = true;     out->temp_c   = d0 * 10 + d1; }
+        if (d2 >= 0 && d3 >= 0) { out->has_humidity = true; out->humidity = d2 * 10 + d3; }
+    }
+    return out->has_time || out->has_temp || out->has_humidity;
+}

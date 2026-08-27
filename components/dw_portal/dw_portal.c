@@ -405,6 +405,19 @@ static esp_err_t lcd_get(httpd_req_t *req)
     cJSON_AddNumberToObject(s, "ring_overflows", st.ring_overflows);
     cJSON_AddNumberToObject(s, "last_frame_bits", st.last_frame_bits);
     cJSON_AddStringToObject(root, "last_frame", frame);
+
+    // Decoded human-readable readout (temp/humidity or time-remaining).
+    dw_lcd_readout_t ro;
+    dw_lcd_get_readout(&ro);
+    cJSON *dec = cJSON_AddObjectToObject(root, "decoded");
+    cJSON_AddStringToObject(dec, "screen", ro.is_time ? "time" : "temp_humidity");
+    if (ro.has_temp)     cJSON_AddNumberToObject(dec, "temp_c", ro.temp_c);
+    if (ro.has_humidity) cJSON_AddNumberToObject(dec, "humidity", ro.humidity);
+    if (ro.has_time) {
+        cJSON_AddNumberToObject(dec, "hours", ro.hours);
+        cJSON_AddNumberToObject(dec, "minutes", ro.minutes);
+        cJSON_AddNumberToObject(dec, "minutes_total", ro.hours * 60 + ro.minutes);
+    }
     return send_json(req, root);
 }
 
