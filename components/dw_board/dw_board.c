@@ -26,23 +26,17 @@ esp_err_t dw_board_init(void)
     gpio_set_level(DW_GPIO_OPTO_A, DW_OPTO_LEVEL_RELEASED);
     gpio_set_level(DW_GPIO_OPTO_P, DW_OPTO_LEVEL_RELEASED);
 
-    // Configure power sense pin (BS813A-1 pin 4 tap: idle HIGH, active LOW)
-    gpio_config_t sense_cfg = {
-        .pin_bit_mask = (1ULL << DW_GPIO_POWER_SENSE),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    ret = gpio_config(&sense_cfg);
-    if (ret != ESP_OK) return ret;
-
+    // Power-sense on GPIO10 is DEFUNCT: GPIO10 is now the LCD /WR sniffer tap
+    // (dw_lcd owns its config). We deliberately do NOT configure it here — the
+    // old power-sense config collided with the WR tap and the WR clock read as a
+    // storm of phantom "power button" taps. Physical power detection is gone;
+    // the LCD decoder tells us the real state instead.
     ESP_LOGI(TAG, "GPIO initialization complete.");
     return ESP_OK;
 }
 
 bool dw_board_read_power_btn_pressed(void)
 {
-    // Pin 4 of BS813A-1 is idle HIGH, active LOW when physically touched
-    return gpio_get_level(DW_GPIO_POWER_SENSE) == 0;
+    // Defunct: GPIO10 repurposed as the LCD /WR tap. Never report a phantom tap.
+    return false;
 }
