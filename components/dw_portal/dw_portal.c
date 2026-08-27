@@ -4,6 +4,7 @@
 #include "dw_device.h"
 #include "dw_touch.h"
 #include "dw_aht20.h"
+#include "dw_lcd.h"
 #include "dw_mqtt.h"
 #include "dc_portal.h"
 #include "dc_evlog.h"
@@ -379,6 +380,34 @@ static esp_err_t info_get(httpd_req_t *req)
 
 static esp_err_t state_get(httpd_req_t *req) { return send_json(req, make_state()); }
 
+// Diagnostic: raw TM1621/HT1621 sniffer output — the mirrored 32-nibble display
+// RAM (hex), decode stats, and the most recent raw frame. Used to verify the tap
+// and build the segment map before we decode digits into the state.
+static esp_err_t lcd_get(httpd_req_t *req)
+{
+    uint8_t ram[DW_LCD_RAM_ADDRS];
+    dw_lcd_get_ram(ram);
+    dw_lcd_stats_t st;
+    dw_lcd_get_stats(&st);
+    char frame[192];
+    dw_lcd_get_last_frame_bits(frame, sizeof(frame));
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "live", dw_lcd_is_live());
+    char hex[DW_LCD_RAM_ADDRS + 1];
+    for (int i = 0; i < DW_LCD_RAM_ADDRS; i++) hex[i] = "0123456789abcdef"[ram[i] & 0xF];
+    hex[DW_LCD_RAM_ADDRS] = '\0';
+    cJSON_AddStringToObject(root, "ram_hex", hex);
+    cJSON *s = cJSON_AddObjectToObject(root, "stats");
+    cJSON_AddNumberToObject(s, "frames", st.frames);
+    cJSON_AddNumberToObject(s, "writes", st.writes);
+    cJSON_AddNumberToObject(s, "commands", st.commands);
+    cJSON_AddNumberToObject(s, "ring_overflows", st.ring_overflows);
+    cJSON_AddNumberToObject(s, "last_frame_bits", st.last_frame_bits);
+    cJSON_AddStringToObject(root, "last_frame", frame);
+    return send_json(req, root);
+}
+
 static esp_err_t command_post(httpd_req_t *req)
 {
     if (auth_reject(req)) return ESP_OK;
@@ -568,6 +597,7 @@ static const httpd_uri_t s_product_routes[] = {
     // Legacy flat v1 routes, retained for scripts / backward compatibility.
     { .uri = "/api/v1/dw/status",  .method = HTTP_GET,  .handler = get_status_handler,  .user_ctx = NULL },
     { .uri = "/api/v1/dw/control", .method = HTTP_POST, .handler = post_control_handler, .user_ctx = NULL },
+    { .uri = "/api/v1/dw/lcd",     .method = HTTP_GET,  .handler = lcd_get,             .user_ctx = NULL },
 };
 
 // ── Web setup schema (dc_portal describe/apply hooks) ────────────────────────
