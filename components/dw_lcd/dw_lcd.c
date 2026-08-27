@@ -141,6 +141,35 @@ static void lcd_task(void *arg)
     }
 }
 
+// Mapping aid: print the RAM to the serial console once it has been stable for
+// ~1s (so blink/transition frames are skipped, and each settled screen prints
+// exactly one clean line). Lets you read "display value -> hex" pairs straight
+// off the console while driving the dryer. Separate task; touches only s_ram.
+static void lcd_dump_task(void *arg)
+{
+    (void)arg;
+    uint8_t prev[DW_LCD_RAM_ADDRS] = {0};
+    uint8_t logged[DW_LCD_RAM_ADDRS] = {0};
+    int stable = 0;
+    char hex[DW_LCD_RAM_ADDRS + 1];
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(300));
+        uint8_t now[DW_LCD_RAM_ADDRS];
+        memcpy(now, s_ram, sizeof(now));
+        if (memcmp(now, prev, sizeof(now)) == 0) {
+            if (++stable == 3 && memcmp(now, logged, sizeof(now)) != 0) {
+                for (int i = 0; i < DW_LCD_RAM_ADDRS; i++) hex[i] = "0123456789abcdef"[now[i] & 0xF];
+                hex[DW_LCD_RAM_ADDRS] = '\0';
+                ESP_LOGW(TAG, "LCD= %s", hex);
+                memcpy(logged, now, sizeof(now));
+            }
+        } else {
+            stable = 0;
+            memcpy(prev, now, sizeof(now));
+        }
+    }
+}
+
 esp_err_t dw_lcd_init(gpio_num_t cs, gpio_num_t wr, gpio_num_t data)
 {
     s_cs = cs; s_wr = wr; s_data = data;
@@ -166,6 +195,7 @@ esp_err_t dw_lcd_init(gpio_num_t cs, gpio_num_t wr, gpio_num_t data)
     gpio_intr_disable(cs);
 
     xTaskCreate(lcd_task, "dw_lcd", 4096, NULL, 6, NULL);
+    xTaskCreate(lcd_dump_task, "dw_lcd_dump", 3072, NULL, 4, NULL);
     ESP_LOGI(TAG, "HT1621 sniffer up: CS=%d WR=%d DATA=%d", (int)cs, (int)wr, (int)data);
     return ESP_OK;
 }
