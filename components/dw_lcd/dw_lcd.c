@@ -254,18 +254,30 @@ bool dw_lcd_get_readout(dw_lcd_readout_t *out)
     memset(out, 0, sizeof(*out));
     int d0 = decode_digit(0), d1 = decode_digit(1);
     int d2 = decode_digit(2), d3 = decode_digit(3);
-    bool colon = (s_ram[15] >> 0) & 1;            // set on the time screen
+    // Screen type from the "%" humidity symbol (a14 bit1): steady, unlike the
+    // colon which blinks — a blinking-off colon used to make the time screen
+    // (e.g. 07:55) misdecode as "07C 55%".
+    bool is_th = (s_ram[14] >> 1) & 1;
 
-    out->is_time = colon;
-    if (colon) {
-        if (d0 >= 0 && d1 >= 0 && d2 >= 0 && d3 >= 0) {
-            out->has_time = true;
-            out->hours   = d0 * 10 + d1;
-            out->minutes = d2 * 10 + d3;
+    out->is_time = !is_th;
+    if (is_th) {
+        if (d0 >= 0 && d1 >= 0) {
+            int t = d0 * 10 + d1;
+            if (t <= 99) { out->has_temp = true; out->temp_c = t; }
+        }
+        if (d2 >= 0 && d3 >= 0) {
+            int h = d2 * 10 + d3;
+            if (h <= 99) { out->has_humidity = true; out->humidity = h; }
         }
     } else {
-        if (d0 >= 0 && d1 >= 0) { out->has_temp = true;     out->temp_c   = d0 * 10 + d1; }
-        if (d2 >= 0 && d3 >= 0) { out->has_humidity = true; out->humidity = d2 * 10 + d3; }
+        if (d0 >= 0 && d1 >= 0 && d2 >= 0 && d3 >= 0) {
+            int hh = d0 * 10 + d1, mm = d2 * 10 + d3;
+            if (mm <= 59 && hh <= 99) {            // reject transition frames
+                out->has_time = true;
+                out->hours   = hh;
+                out->minutes = mm;
+            }
+        }
     }
     return out->has_time || out->has_temp || out->has_humidity;
 }
