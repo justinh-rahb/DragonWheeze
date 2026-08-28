@@ -72,6 +72,8 @@ DragonWheeze uses [`dragon-core`](https://github.com/justinh-rahb/dragon-core) (
 
 > **Repurposed pins:** GPIO3/GPIO4 were the legacy AHT20 I2C SCL/SDA, and GPIO10 was the old BS813A-1 power-sense — all three are now the LCD sniffer taps. Power the ESP from the 12 V→~5.8 V buck (common ground with the dryer); a 100 µF (ideally more) bulk cap on the buck output helps ride out the heater turn-on inrush. Each tap uses a **3 kΩ series resistor**; the taps are inputs only, so nothing is ever driven onto the dryer.
 
+📐 **Full wiring schematic, bill of materials, and build photos:** [`docs/hardware/`](docs/hardware/README.md)
+
 ---
 
 ## Preset Profiles
