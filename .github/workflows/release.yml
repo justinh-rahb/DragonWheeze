@@ -70,7 +70,7 @@ jobs:
           | \`SHA256SUMS.txt\` | Checksum verification file |
           EOF
           )"
-          flags=(--title "${VERSION} — Native Sovol SH01 Firmware" --notes "$notes")
+          flags=(--title "${VERSION}" --notes "$notes")
           [ "$IS_TAG" = "true" ] || flags+=(--draft)
 
           gh release create "$VERSION" "${flags[@]}" \
