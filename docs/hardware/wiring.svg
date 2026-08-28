@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 860" preserveAspectRatio="xMidYMid meet">
+  <style>
+    svg{--ink:#201d13;--muted:#6c6753;--line:#d8d1bb;--panel:#fffdf6;--panel-2:#f0ecdd;--chip:#e6ddc4;--chip-ink:#3a3527;--sig:#1f6fb2;--opto:#2f8f68;--pwr:#c34a2c;}
+    @media (prefers-color-scheme:dark){svg{--ink:#f4f0e1;--muted:#a49e88;--line:#35301f;--panel:#1d1b12;--panel-2:#26231a;--chip:#2d2818;--chip-ink:#e8e0c8;--sig:#5aa8e0;--opto:#5cc298;--pwr:#e8734f;}}
+    .box{fill:var(--panel-2);stroke:var(--ink);stroke-width:1.6}
+    .chip{fill:var(--chip);stroke:var(--ink);stroke-width:1.5}
+    .comp{fill:var(--panel);stroke:var(--ink);stroke-width:1.5}
+    .sw{fill:none;stroke:var(--ink);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+    .node{fill:var(--ink)}
+    .iso{stroke:var(--muted);stroke-width:1.2;stroke-dasharray:3 3}
+    .t-lbl{fill:var(--ink);font:600 15px system-ui,sans-serif}
+    .t-sub{fill:var(--muted);font:500 12px ui-monospace,Menlo,monospace}
+    .t-pin{fill:var(--ink);font:600 13px ui-monospace,Menlo,monospace}
+    .t-val{fill:var(--ink);font:600 12.5px ui-monospace,Menlo,monospace}
+    .t-sec{font:700 14px ui-monospace,Menlo,monospace;letter-spacing:.03em}
+    .t-note{fill:var(--muted);font:500 12px ui-monospace,Menlo,monospace}
+  </style>
+  <rect x="0" y="0" width="1180" height="860" fill="var(--panel)"/>
+
+      <!-- ============ ESP ============ -->
+      <rect class="box" x="56" y="160" width="152" height="490" rx="10"/>
+      <text class="t-lbl" x="132" y="198" text-anchor="middle">ESP32-C3</text>
+      <text class="t-sub" x="132" y="218" text-anchor="middle">Super Mini · 3V3</text>
+      <!-- signal pins -->
+      <circle class="node" cx="208" cy="262" r="3.6"/><text class="t-pin" x="199" y="266" text-anchor="end">GPIO3</text>
+      <circle class="node" cx="208" cy="312" r="3.6"/><text class="t-pin" x="199" y="316" text-anchor="end">GPIO10</text>
+      <circle class="node" cx="208" cy="362" r="3.6"/><text class="t-pin" x="199" y="366" text-anchor="end">GPIO4</text>
+      <circle class="node" cx="208" cy="482" r="3.6"/><text class="t-pin" x="199" y="486" text-anchor="end">GPIO5</text>
+      <circle class="node" cx="208" cy="542" r="3.6"/><text class="t-pin" x="199" y="546" text-anchor="end">GPIO6</text>
+      <circle class="node" cx="208" cy="592" r="3.6"/><text class="t-pin" x="199" y="596" text-anchor="end">GPIO7</text>
+      <!-- power pins -->
+      <circle class="node" cx="104" cy="650" r="3.6"/><text class="t-pin" x="104" y="638" text-anchor="middle">3V3/5V</text>
+      <circle class="node" cx="172" cy="650" r="3.6"/><text class="t-pin" x="172" y="638" text-anchor="middle">GND</text>
+
+      <!-- ============ 1 · LCD SNIFF ============ -->
+      <text class="t-sec" x="252" y="228" style="fill:var(--sig)">① LCD SNIFF — passive, replaces the AHT21</text>
+      <!-- CS -->
+      <path class="sw" style="stroke:var(--sig)" d="M208,262 H330"/>
+      <rect class="comp" style="stroke:var(--sig)" x="330" y="251" width="66" height="22" rx="2"/>
+      <text class="t-val" x="363" y="266" text-anchor="middle" style="fill:var(--sig)">3 kΩ</text>
+      <path class="sw" style="stroke:var(--sig)" d="M396,262 H688"/>
+      <!-- WR -->
+      <path class="sw" style="stroke:var(--sig)" d="M208,312 H330"/>
+      <rect class="comp" style="stroke:var(--sig)" x="330" y="301" width="66" height="22" rx="2"/>
+      <text class="t-val" x="363" y="316" text-anchor="middle" style="fill:var(--sig)">3 kΩ</text>
+      <path class="sw" style="stroke:var(--sig)" d="M396,312 H688"/>
+      <!-- DATA -->
+      <path class="sw" style="stroke:var(--sig)" d="M208,362 H330"/>
+      <rect class="comp" style="stroke:var(--sig)" x="330" y="351" width="66" height="22" rx="2"/>
+      <text class="t-val" x="363" y="366" text-anchor="middle" style="fill:var(--sig)">3 kΩ</text>
+      <path class="sw" style="stroke:var(--sig)" d="M396,362 H688"/>
+      <!-- TM1621 -->
+      <rect class="chip" x="688" y="238" width="200" height="164" rx="8"/>
+      <text class="t-lbl" x="788" y="226" text-anchor="middle">TM1621C · LCD driver (U1)</text>
+      <circle class="node" cx="688" cy="262" r="3.6"/><text class="t-pin" x="706" y="266">6 · /CS</text>
+      <circle class="node" cx="688" cy="312" r="3.6"/><text class="t-pin" x="706" y="316">7 · /WR</text>
+      <circle class="node" cx="688" cy="362" r="3.6"/><text class="t-pin" x="706" y="366">8 · DATA</text>
+      <text class="t-note" x="788" y="384" text-anchor="middle">taps on the mainboard's</text>
+      <text class="t-note" x="788" y="398" text-anchor="middle">LCD driver</text>
+
+      <!-- ============ 2 · TOUCH ACTUATE ============ -->
+      <text class="t-sec" x="252" y="450" style="fill:var(--opto)">② TOUCH ACTUATE — 3× 4N35 optocoupler</text>
+      <!-- 200 ohm -->
+      <path class="sw" style="stroke:var(--opto)" d="M208,482 H262"/>
+      <rect class="comp" style="stroke:var(--opto)" x="262" y="471" width="70" height="22" rx="2"/>
+      <text class="t-val" x="297" y="486" text-anchor="middle" style="fill:var(--opto)">200 Ω</text>
+      <path class="sw" style="stroke:var(--opto)" d="M332,482 H452"/>
+      <!-- 4N35 body -->
+      <rect class="comp" x="452" y="452" width="152" height="112" rx="6"/>
+      <text class="t-sub" x="528" y="474" text-anchor="middle" style="fill:var(--ink);font-weight:700">4N35 · U3/U4/U5</text>
+      <line class="iso" x1="528" y1="456" x2="528" y2="560"/>
+      <!-- LED (left half) -->
+      <path class="sw" d="M452,482 H484 V496"/>
+      <path class="sw" d="M472,496 H496 L484,514 Z" fill="var(--ink)"/>
+      <path class="sw" d="M472,514 H496"/>
+      <path class="sw" d="M484,514 V526 H452"/>
+      <path class="sw" d="M498,486 l9,-7 M502,494 l9,-7" style="stroke:var(--muted)"/>
+      <!-- transistor (right half) -->
+      <circle class="comp" cx="556" cy="508" r="20"/>
+      <line class="sw" x1="528" y1="508" x2="544" y2="508"/>
+      <line class="sw" x1="544" y1="496" x2="544" y2="520"/>
+      <path class="sw" d="M544,502 L572,488 H604"/>
+      <path class="sw" d="M544,514 L572,528 H604"/>
+      <path class="sw" d="M565,524 l8,4 -2,-8" fill="var(--ink)"/>
+      <!-- pin labels -->
+      <text class="t-pin" x="447" y="478" text-anchor="end">1</text><text class="t-note" x="447" y="492" text-anchor="end">A</text>
+      <text class="t-pin" x="447" y="522" text-anchor="end">2</text><text class="t-note" x="447" y="536" text-anchor="end">K</text>
+      <text class="t-pin" x="609" y="484">5</text><text class="t-note" x="609" y="498">C</text>
+      <text class="t-pin" x="609" y="524">4</text><text class="t-note" x="609" y="538">E</text>
+
+      <!-- pin2 cathode -> GND -->
+      <path class="sw" d="M452,526 H414 V632"/>
+      <g transform="translate(414,632)"><line class="sw" x1="0" y1="0" x2="0" y2="9"/><line class="sw" x1="-11" y1="9" x2="11" y2="9"/><line class="sw" x1="-7" y1="14" x2="7" y2="14"/><line class="sw" x1="-3" y1="19" x2="3" y2="19"/></g>
+      <text class="t-note" x="414" y="678" text-anchor="middle">pin 2 (cathode) → GND</text>
+
+      <!-- pin5 collector -> GND -->
+      <path class="sw" d="M604,488 H660 V566"/>
+      <g transform="translate(660,566)"><line class="sw" x1="0" y1="0" x2="0" y2="9"/><line class="sw" x1="-10" y1="9" x2="10" y2="9"/><line class="sw" x1="-6" y1="14" x2="6" y2="14"/><line class="sw" x1="-3" y1="19" x2="3" y2="19"/></g>
+      <text class="t-note" x="668" y="492">pin 5 → GND</text>
+
+      <!-- pin4 emitter -> 100k (series) -> pad -->
+      <path class="sw" style="stroke:var(--opto)" d="M604,528 H636"/>
+      <rect class="comp" style="stroke:var(--opto)" x="636" y="517" width="72" height="22" rx="2"/>
+      <text class="t-val" x="672" y="532" text-anchor="middle" style="fill:var(--opto)">100 kΩ</text>
+      <path class="sw" style="stroke:var(--opto)" d="M708,528 H744"/>
+      <rect class="chip" x="744" y="506" width="160" height="46" rx="6"/>
+      <text class="t-lbl" x="824" y="526" text-anchor="middle" style="fill:var(--chip-ink)">BS813A pad</text>
+      <text class="t-sub" x="824" y="542" text-anchor="middle">Power / Mode / Adjust</text>
+
+      <!-- GPIO6/7 stubs + note -->
+      <path class="sw" style="stroke:var(--opto)" d="M208,542 H262 M208,592 H262"/>
+      <text class="t-note" x="276" y="575" style="fill:var(--opto)">×2 — GPIO6, GPIO7 identical → Mode, Adjust pads</text>
+
+      <!-- ============ 3 · POWER ============ -->
+      <text class="t-sec" x="252" y="712" style="fill:var(--pwr)">③ POWER — Mini360 buck off the 12 V rail</text>
+      <!-- buck -->
+      <rect class="comp" style="stroke:var(--pwr)" x="330" y="734" width="158" height="52" rx="6"/>
+      <text class="t-lbl" x="409" y="758" text-anchor="middle" style="fill:var(--pwr)">Mini360</text>
+      <text class="t-sub" x="409" y="775" text-anchor="middle">12 V → 5.8 / 3.3 V</text>
+      <path class="sw" style="stroke:var(--pwr)" d="M104,650 V760 H330"/>
+      <path class="sw" style="stroke:var(--pwr)" d="M488,760 H628"/>
+      <text class="t-pin" x="640" y="764" style="fill:var(--pwr)">+12 V (dryer)</text>
+      <!-- 100uF cap on the 5V line -->
+      <path class="sw" d="M170,760 V800"/>
+      <line class="sw" x1="152" y1="800" x2="188" y2="800"/>
+      <line class="sw" x1="158" y1="810" x2="182" y2="810"/>
+      <path class="sw" d="M170,810 V832"/>
+      <g transform="translate(170,832)"><line class="sw" x1="0" y1="0" x2="0" y2="8"/><line class="sw" x1="-10" y1="8" x2="10" y2="8"/><line class="sw" x1="-6" y1="13" x2="6" y2="13"/><line class="sw" x1="-3" y1="18" x2="3" y2="18"/></g>
+      <text class="t-note" x="200" y="808">100 µF</text>
+      <!-- ESP GND -> GND symbol -->
+      <path class="sw" d="M172,650 V690"/>
+      <g transform="translate(172,690)"><line class="sw" x1="0" y1="0" x2="0" y2="9"/><line class="sw" x1="-10" y1="9" x2="10" y2="9"/><line class="sw" x1="-6" y1="14" x2="6" y2="14"/><line class="sw" x1="-3" y1="19" x2="3" y2="19"/></g>
+
+      <text class="t-note" x="1030" y="832" text-anchor="end">⏚ common ground — tie all to the 100 µF cap (−)</text>
+    </svg>
