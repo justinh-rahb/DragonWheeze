@@ -4,6 +4,7 @@
 #include "dw_board.h"
 #include "dw_touch.h"
 #include "dw_aht20.h"
+#include "dw_lcd.h"
 #include "dc_evlog.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -475,17 +476,18 @@ void dw_device_tick_1s(void)
     }
     s_last_phys_btn_state = phys_btn;
 
-    // Handle sensor updates every polling_interval seconds (0 = disabled;
-    // never touch the shared I2C bus, e.g. to stop the SH01 E0 error).
-    uint32_t poll_iv = dw_aht20_get_polling_interval();
-    s_sensor_timer_sec++;
-    if (poll_iv > 0 && s_sensor_timer_sec >= poll_iv) {
-        s_sensor_timer_sec = 0;
-        float temp = 0.0f, rh = 0.0f;
-        if (dw_aht20_read(&temp, &rh) == ESP_OK) {
-            s_state.ambient_temp_c = temp;
-            s_state.ambient_humidity_rh = rh;
-        }
+    // Ambient temp/humidity now come from the decoded LCD (the dryer's own
+    // sensors, read passively off the display) instead of the I2C AHT20 — no bus
+    // contention, no E0. The display cycles temp/humidity <-> time, so we only
+    // update a field when its screen is currently showing valid digits; the last
+    // good reading persists between cycles.
+    dw_lcd_readout_t ro;
+    if (dw_lcd_get_readout(&ro)) {
+        if (ro.has_temp && !ro.is_setpoint) s_state.ambient_temp_c = (float)ro.temp_c;
+        if (ro.has_humidity)                s_state.ambient_humidity_rh = (float)ro.humidity;
+        // While a cycle runs, trust the dryer's own countdown for remaining time.
+        if (ro.has_time && s_state.active_status)
+            s_state.remaining_sec = (uint32_t)(ro.hours * 3600 + ro.minutes * 60);
     }
 
     if (s_state.power_status) {

@@ -22,6 +22,7 @@
 #include "dw_board.h"
 #include "dw_touch.h"
 #include "dw_aht20.h"
+#include "dw_lcd.h"
 #include "dw_device.h"
 #include "dw_mqtt.h"
 #include "dw_portal.h"
@@ -97,8 +98,12 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    // 4. AHT20 Temperature/Humidity sensor initialization
-    dw_aht20_init();
+    // 4. LCD sniffer — passively decode the mainboard's TM1621C to read the
+    // display (and the ambient temp/RH it shows). Replaces the I2C AHT20 path:
+    // GPIO3/4 are now CS/DATA taps and we no longer master the shared I2C bus,
+    // so the E0 contention is gone for good. (dw_aht20_init() intentionally NOT
+    // called — it would grab GPIO3/4 for I2C and conflict with the taps.)
+    ESP_ERROR_CHECK(dw_lcd_init(DW_GPIO_LCD_CS, DW_GPIO_LCD_WR, DW_GPIO_LCD_DATA));
 
     // 5. State machine initialization
     ESP_ERROR_CHECK(dw_device_init());

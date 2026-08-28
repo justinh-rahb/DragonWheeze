@@ -21,10 +21,18 @@ extern "C" {
 #define DW_OPTO_LEVEL_PRESSED   1
 #define DW_OPTO_LEVEL_RELEASED  0
 
-// Power-state sense input: ESPHome "Power Touch" binary_sensor on GPIO10
-// (inverted -> touch IC pulls it LOW when powered).
-#define DW_GPIO_POWER_SENSE  GPIO_NUM_10
+// LCD sniffer taps — passive listen on the mainboard's TM1621C (HT1621) 3-wire
+// serial to reconstruct the display (digits, icons, ambient temp/RH, E0).
+// SUPERSEDES the I2C AHT20 + power-sense below: we no longer master the shared
+// I2C bus (that was the E0 source) or read the momentary power pad. Rewire:
+// solder TM1621 CS -> GPIO3, WR -> GPIO10, DATA -> GPIO4 (all inputs).
+#define DW_GPIO_LCD_CS       GPIO_NUM_3
+#define DW_GPIO_LCD_WR       GPIO_NUM_10
+#define DW_GPIO_LCD_DATA     GPIO_NUM_4
 
+// (Legacy — no longer wired once the LCD taps are in place.)
+// Power-state sense input: ESPHome "Power Touch" binary_sensor on GPIO10.
+#define DW_GPIO_POWER_SENSE  GPIO_NUM_10
 // AHT sensor I2C bus (J2 connector) per the schematic.
 #define DW_GPIO_I2C_SDA      GPIO_NUM_4
 #define DW_GPIO_I2C_SCL      GPIO_NUM_3
