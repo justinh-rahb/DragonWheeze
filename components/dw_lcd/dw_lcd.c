@@ -110,72 +110,48 @@ static void decode_frame(const uint8_t *bits, size_t n)
     }
 }
 
-// Continuous capture. The MCU only writes the TM1621 when the display CHANGES,
-// so we must be listening whenever it does — a periodic window misses the
-// transient writes. The ISRs are tiny (an IRAM register read + ring push, ~a few
-// percent CPU), so this coexists with WiFi fine now that they're IRAM-safe. We
-// keep them OFF for the first few seconds so the WiFi join isn't competing for
-// CPU, then run continuously.
+// Gated capture. The display refreshes continuously, so leaving the edge ISRs
+// always-on kept the ring perpetually full — lcd_task never slept and, on the
+// single-core C3, starved the WiFi/httpd tasks (send/accept errors, then WiFi
+// drops). Instead we open a short capture window each period: ~100 ms with the
+// ISRs on fully re-reads the display RAM (it's refreshed many times over), then
+// the ISRs go off and the task sleeps, handing the core back to the network
+// stack. Temp/humidity/time still update once a second — plenty.
 #define DW_LCD_STARTUP_MS 3000
+#define DW_LCD_CAPTURE_MS 100
+#define DW_LCD_PERIOD_MS  1000
 
 static void lcd_task(void *arg)
 {
     (void)arg;
     static uint8_t frame[320];
-    size_t fn = 0;
-    bool in_frame = false;
 
     vTaskDelay(pdMS_TO_TICKS(DW_LCD_STARTUP_MS));   // let WiFi connect first
-    gpio_intr_enable(s_wr);
-    gpio_intr_enable(s_cs);
 
     for (;;) {
-        if (s_tail == s_head) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
-        uint8_t v = s_ring[s_tail];
-        s_tail = (s_tail + 1) & (RING_SZ - 1);
-        switch (v) {
-        case B_START: fn = 0; in_frame = true; break;
-        case B_END:   if (in_frame) decode_frame(frame, fn); in_frame = false; break;
-        default:      if (in_frame && fn < sizeof(frame)) frame[fn++] = v; break;
-        }
-    }
-}
+        size_t fn = 0;
+        bool in_frame = false;
+        s_tail = s_head;                            // fresh window: drop stale bytes
+        gpio_intr_enable(s_wr);
+        gpio_intr_enable(s_cs);
 
-// Mapping aid: print the RAM to the serial console once it has been stable for
-// ~1s (so blink/transition frames are skipped, and each settled screen prints
-// exactly one clean line). Lets you read "display value -> hex" pairs straight
-// off the console while driving the dryer. Separate task; touches only s_ram.
-static void lcd_dump_task(void *arg)
-{
-    (void)arg;
-    uint8_t prev[DW_LCD_RAM_ADDRS] = {0};
-    uint8_t logged[DW_LCD_RAM_ADDRS] = {0};
-    int stable = 0;
-    char hex[DW_LCD_RAM_ADDRS + 1];
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(300));
-        uint8_t now[DW_LCD_RAM_ADDRS];
-        memcpy(now, s_ram, sizeof(now));
-        if (memcmp(now, prev, sizeof(now)) == 0) {
-            if (++stable == 3 && memcmp(now, logged, sizeof(now)) != 0) {
-                for (int i = 0; i < DW_LCD_RAM_ADDRS; i++) hex[i] = "0123456789abcdef"[now[i] & 0xF];
-                hex[DW_LCD_RAM_ADDRS] = '\0';
-                dw_lcd_readout_t ro;
-                dw_lcd_get_readout(&ro);
-                if (ro.has_time)
-                    ESP_LOGW(TAG, "LCD= %s  => TIME %02d:%02d", hex, ro.hours, ro.minutes);
-                else if (ro.is_setpoint && ro.has_temp)
-                    ESP_LOGW(TAG, "LCD= %s  => SET %dC", hex, ro.temp_c);
-                else if (ro.has_temp || ro.has_humidity)
-                    ESP_LOGW(TAG, "LCD= %s  => %dC %d%%", hex, ro.temp_c, ro.humidity);
-                else
-                    ESP_LOGW(TAG, "LCD= %s", hex);
-                memcpy(logged, now, sizeof(now));
+        TickType_t end = xTaskGetTickCount() + pdMS_TO_TICKS(DW_LCD_CAPTURE_MS);
+        while (xTaskGetTickCount() < end) {
+            while (s_tail != s_head) {
+                uint8_t v = s_ring[s_tail];
+                s_tail = (s_tail + 1) & (RING_SZ - 1);
+                switch (v) {
+                case B_START: fn = 0; in_frame = true; break;
+                case B_END:   if (in_frame) decode_frame(frame, fn); in_frame = false; break;
+                default:      if (in_frame && fn < sizeof(frame)) frame[fn++] = v; break;
+                }
             }
-        } else {
-            stable = 0;
-            memcpy(prev, now, sizeof(now));
+            vTaskDelay(1);                          // yield to the network stack
         }
+
+        gpio_intr_disable(s_wr);                    // window closed — free the CPU
+        gpio_intr_disable(s_cs);
+        vTaskDelay(pdMS_TO_TICKS(DW_LCD_PERIOD_MS - DW_LCD_CAPTURE_MS));
     }
 }
 
@@ -203,8 +179,7 @@ esp_err_t dw_lcd_init(gpio_num_t cs, gpio_num_t wr, gpio_num_t data)
     gpio_intr_disable(wr);          // stay OFF until the gated task opens a window
     gpio_intr_disable(cs);
 
-    xTaskCreate(lcd_task, "dw_lcd", 4096, NULL, 6, NULL);
-    xTaskCreate(lcd_dump_task, "dw_lcd_dump", 3072, NULL, 4, NULL);
+    xTaskCreate(lcd_task, "dw_lcd", 4096, NULL, 5, NULL);
     ESP_LOGI(TAG, "HT1621 sniffer up: CS=%d WR=%d DATA=%d", (int)cs, (int)wr, (int)data);
     return ESP_OK;
 }
