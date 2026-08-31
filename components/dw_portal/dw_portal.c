@@ -601,10 +601,23 @@ static esp_err_t post_control_handler(httpd_req_t *req)
 // budget as 16 + product_route_count, so declaring them here keeps the table
 // from overflowing. (The callback path leaves product_route_count at 0, which
 // caps the budget at 16 and silently drops routes past the 13 built-ins + 2.)
+// The shared SPA opens an EventSource on /api/v2/events for live push. The wheeze
+// pushes nothing (the SPA falls back to polling /api/v2/state), and without this
+// route EventSource retries every ~3s forever — churning the httpd's tiny socket
+// pool until it can't accept anything. Answer with a minimal event-stream that
+// tells the browser to back off (reconnect at most once a minute) and close.
+static esp_err_t events_get(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/event-stream");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, "retry: 60000\n: dragonwheeze polls /api/v2/state\n\n");
+}
+
 static const httpd_uri_t s_product_routes[] = {
     // v2 surface consumed by the shared SPA (matches dv_portal / pb_httpd).
     { .uri = "/api/v2/info",       .method = HTTP_GET,  .handler = info_get,            .user_ctx = NULL },
     { .uri = "/api/v2/state",      .method = HTTP_GET,  .handler = state_get,           .user_ctx = NULL },
+    { .uri = "/api/v2/events",     .method = HTTP_GET,  .handler = events_get,          .user_ctx = NULL },
     { .uri = "/api/v2/command",    .method = HTTP_POST, .handler = command_post,        .user_ctx = NULL },
     { .uri = "/api/v2/profiles",   .method = HTTP_GET,  .handler = profiles_get,        .user_ctx = NULL },
     { .uri = "/api/v2/profiles",   .method = HTTP_POST, .handler = profiles_post,       .user_ctx = NULL },
@@ -725,6 +738,17 @@ esp_err_t dw_portal_start(void)
 {
     ESP_LOGI(TAG, "Starting dw_portal Web Service...");
 
+    // Harden the httpd against socket-pool exhaustion. lru_purge_enable lets it
+    // drop the least-recently-used connection when the small socket pool fills,
+    // instead of permanently failing to accept new connections — the flaky-mesh
+    // half-open sockets + the SPA's EventSource retries otherwise wedged it until
+    // a reboot. Short recv/send timeouts reclaim sockets a vanished WiFi peer
+    // left half-open. (dc_portal copies this struct, so a local is fine.)
+    httpd_config_t http = HTTPD_DEFAULT_CONFIG();
+    http.lru_purge_enable = true;
+    http.recv_wait_timeout = 6;
+    http.send_wait_timeout = 6;
+
     dc_portal_config_t cfg = {
         .product = "dragonwheeze",
         .display_name = "DragonWheeze (Sovol SH01)",
@@ -733,6 +757,7 @@ esp_err_t dw_portal_start(void)
         .describe_product = setup_describe,
         .apply_product = setup_apply,
         .authorize = authorize,
+        .httpd_config = &http,
         .ctx = NULL,
     };
 
