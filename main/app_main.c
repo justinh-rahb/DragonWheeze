@@ -120,6 +120,10 @@ void app_main(void)
     if (wifi_err != ESP_OK) {
         ESP_LOGE(TAG, "dc_wifi_set_identity: %s (using family defaults)", esp_err_to_name(wifi_err));
     }
+    // The ESP32-C3 SuperMini's weak PCB antenna + mesh-DHCP flakiness need the
+    // hardened STA path (modem power-save off, no-DHCP-IP watchdog, longer retries).
+    // Other Dragon products run on healthier radios and stay on the STANDARD default.
+    ESP_ERROR_CHECK(dc_wifi_set_radio_profile(DC_WIFI_RADIO_CONSTRAINED));
     ESP_LOGI(TAG, "Starting dc_wifi...");
     dc_wifi_start();
 
