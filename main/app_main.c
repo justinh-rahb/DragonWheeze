@@ -26,6 +26,7 @@
 #include "dw_device.h"
 #include "dw_mqtt.h"
 #include "dw_portal.h"
+#include "dw_peer.h"
 #include "dc_evlog.h"
 #include "dc_wifi.h"
 
@@ -134,6 +135,12 @@ void app_main(void)
     // 8. Home Assistant / MQTT integration — runtime-configured from the web
     // setup page (persisted in NVS). No-op until a broker is enabled there.
     dw_mqtt_start("DragonWheeze SH01", "dragonwheeze_sh01");
+
+    // 8b. ESP-NOW discovery: broadcast the ANNOUNCE descriptor + dryer status so a
+    // console (DragonTouch) can find and display this dryer. Status only; non-fatal.
+    esp_err_t peer_err = dw_peer_start();
+    if (peer_err != ESP_OK)
+        ESP_LOGW(TAG, "dw_peer_start failed: %s (continuing)", esp_err_to_name(peer_err));
 
     // 9. Start periodic state machine tick task
     xTaskCreate(tick_task, "dw_tick", 4096, NULL, 5, NULL);

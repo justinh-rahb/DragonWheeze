@@ -25,3 +25,9 @@ dependencies:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_portal
     version: v0.32.0
+  # ESP-NOW peer transport for family discovery/status (dw_peer provider). Not in
+  # v0.32.0 yet — pinned to the peer-plane branch during development.
+  dc_peer:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_peer
+    version: feat/dc-peer-espnow
