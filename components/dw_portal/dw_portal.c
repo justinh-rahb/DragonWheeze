@@ -657,6 +657,14 @@ static cJSON *setup_describe(void *ctx)
 
     cJSON *root = cJSON_CreateObject();
     cJSON *sections = cJSON_AddArrayToObject(root, "sections");
+
+    cJSON *sd = add_setup_section(sections, "Device",
+        "Network hostname used for DHCP and mDNS (<hostname>.local). Changing this "
+        "requires a restart.");
+    char hostname[33];
+    dc_wifi_get_hostname(hostname, sizeof hostname);
+    cJSON_AddStringToObject(add_field(sd, "hostname", "Hostname", "text"), "value", hostname);
+
     cJSON *s = add_setup_section(sections, "Home Assistant (MQTT)",
         "Connect the dryer to your MQTT broker so Home Assistant auto-discovers it "
         "as a device you can watch and control. Leave disabled to keep it local-only.");
@@ -685,6 +693,25 @@ static esp_err_t setup_apply(const cJSON *values, void *ctx, char *message, size
 {
     (void)ctx;
     if (!values) return ESP_ERR_INVALID_ARG;
+
+    // Device hostname — the Device Save button posts only this field. Validated
+    // and persisted by dc_wifi (family-wide); applied on the next restart.
+    cJSON *hostname = cJSON_GetObjectItem(values, "hostname");
+    if (cJSON_IsString(hostname)) {
+        if (!dc_wifi_hostname_valid(hostname->valuestring)) {
+            snprintf(message, message_size,
+                     "Hostname must be 1-32 chars: letters, digits, hyphen (no leading/trailing hyphen).");
+            return ESP_ERR_INVALID_ARG;
+        }
+        esp_err_t herr = dc_wifi_set_hostname(hostname->valuestring);
+        if (herr != ESP_OK) { snprintf(message, message_size, "Could not save hostname."); return herr; }
+        if (!cJSON_GetObjectItem(values, "mqtt_enable") &&
+            !cJSON_GetObjectItem(values, "mqtt_host") &&
+            !cJSON_GetObjectItem(values, "aht_poll")) {
+            snprintf(message, message_size, "Hostname saved; restart to apply.");
+            return ESP_OK;
+        }
+    }
 
     // Ambient sensor poll interval — the E0 mitigation knob. Its Save button
     // posts only this field, so apply it and return unless MQTT fields came too.
